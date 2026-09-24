@@ -39,7 +39,7 @@ jobs:
       - run: cargo test --workspace
       - name: Upload screenshot diffs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: screenshot-diffs-${{ matrix.os }}
           path: "**/__screenshots__/**/*.{actual,diff}.png"
