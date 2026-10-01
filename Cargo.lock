@@ -1781,9 +1781,9 @@ checksum = "f70749695b063ecbf6b62949ccccde2e733ec3ecbbd71d467dca4e5c6c97cca0"
 
 [[package]]
 name = "glam"
-version = "0.33.9"
+version = "0.33.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35accb17301a4874ea893c685ca86bc1e25f92499382adc17eec9a91f7803cfb"
+checksum = "37bfe73dc8ec21f54d181e5a60554327ec3f1c600c455a75ccbfc65d2106a6c4"
 dependencies = [
  "approx",
  "bytemuck",
@@ -1799,7 +1799,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "28d74079318e3a077bd3d15faa90fde24fa37bb9f157f92f853e6019a15fd413"
 dependencies = [
  "approx",
- "glam 0.33.9",
+ "glam 0.33.12",
  "nalgebra",
  "num-traits",
  "simba",
@@ -2505,7 +2505,7 @@ checksum = "fca8be8ab571564019979c2a010cca84e43fe94923681cf062d2fe22a9cf6ef2"
 dependencies = [
  "atomic-arena",
  "cpal",
- "glam 0.33.9",
+ "glam 0.33.12",
  "mint",
  "pastey 0.2.3",
  "rtrb",
@@ -2885,7 +2885,7 @@ dependencies = [
  "glam 0.30.10",
  "glam 0.31.1",
  "glam 0.32.1",
- "glam 0.33.9",
+ "glam 0.33.12",
  "matrixmultiply",
  "nalgebra-macros",
  "num-complex",
@@ -4930,7 +4930,7 @@ dependencies = [
  "bevy_mikktspace",
  "criterion",
  "futures",
- "glam 0.33.9",
+ "glam 0.33.12",
  "gltf",
  "image",
  "js-sys",
@@ -4956,7 +4956,7 @@ dependencies = [
 name = "space3d-audio"
 version = "0.1.0"
 dependencies = [
- "glam 0.33.9",
+ "glam 0.33.12",
  "kira",
  "space3d-core",
  "thiserror 2.0.21",
@@ -4985,7 +4985,7 @@ version = "0.1.0"
 dependencies = [
  "ahash",
  "criterion",
- "glam 0.33.9",
+ "glam 0.33.12",
  "hecs",
  "proptest",
  "serde",
@@ -5114,7 +5114,7 @@ name = "space3d-physics"
 version = "0.1.0"
 dependencies = [
  "criterion",
- "glam 0.33.9",
+ "glam 0.33.12",
  "rapier3d",
  "space3d-core",
  "tracing",
@@ -5125,7 +5125,7 @@ name = "space3d-platform"
 version = "0.1.0"
 dependencies = [
  "console_error_panic_hook",
- "glam 0.33.9",
+ "glam 0.33.12",
  "image",
  "js-sys",
  "pollster",
@@ -5150,7 +5150,7 @@ dependencies = [
  "bytemuck",
  "criterion",
  "futures",
- "glam 0.33.9",
+ "glam 0.33.12",
  "image",
  "naga",
  "pollster",
@@ -5191,7 +5191,7 @@ dependencies = [
 name = "space3d-scene"
 version = "0.1.0"
 dependencies = [
- "glam 0.33.9",
+ "glam 0.33.12",
  "ron",
  "serde",
  "serde_json",
