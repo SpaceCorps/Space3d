@@ -40,7 +40,7 @@ space3d-particles = { path = "crates/space3d-particles" }
 
 # core / ecs / math
 hecs = "0.11.1"
-glam = { version = "0.33.9", features = ["bytemuck", "serde"] }
+glam = { version = "0.34.0", features = ["bytemuck", "serde"] }
 bytemuck = { version = "1.25.2", features = ["derive"] }
 smallvec = "1.16.1"
 ahash = { version = "0.8.12", default-features = false, features = ["std"] }
