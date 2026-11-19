@@ -52,3 +52,19 @@ jobs:
         env: { HOOK: "${{ secrets.SLIPLANE_DEPLOY_HOOK }}" }
         run: |
           if [ -z "$HOOK" ]; then echo "SLIPLANE_DEPLOY_HOOK not set; skipping"; else curl -fsS -X POST "$HOOK"; fi
+
+  # The committed site/src/spacecorps-tokens.css must equal what the published design-system
+  # version (site/design-system.json) contains. Needs this repo to have read access to the
+  # private @spacecorps/components package (package settings -> Manage Actions access).
+  tokens:
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions: { contents: read, packages: read }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 24 }
+      - run: node site/scripts/sync-tokens.mjs
+        env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}" }
+      - run: git diff --exit-code -- site/src/spacecorps-tokens.css
