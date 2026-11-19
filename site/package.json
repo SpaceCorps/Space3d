@@ -8,9 +8,11 @@
     "dev": "vp dev",
     "build": "vp build",
     "preview": "vp preview",
-    "check": "vp check"
+    "check": "vp check",
+    "sync:tokens": "node scripts/sync-tokens.mjs"
   },
   "devDependencies": {
     "vite-plus": "^1.7.0"
-  }
+  },
+  "packageManager": "pnpm@10.33.2"
 }
