@@ -539,6 +539,7 @@ fn gpu_100k_within_budget() {
 /// regression bound: CPU timings on a shared build machine swing by 2× (about 0.10–0.14 ms
 /// and 0.12–0.15 ms measured on an M4 Max).
 #[test]
+#[ignore = "perf gate: CI runners (software or paravirtual GPUs) cannot measure a 1 ms budget; run with --ignored on a Dev machine"]
 fn gpu_prepare_cpu_time() {
     use crate::prelude::*;
     use space3d_core::prelude::*;
