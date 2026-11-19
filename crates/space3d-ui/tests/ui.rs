@@ -371,8 +371,12 @@ fn azerty_typing_and_undo_follow_the_layout() {
     // Let egui's undoer settle (new undo point after 1 s without changes).
     app.step_ticks(90);
     // Command + QWERTY's Z position types "w" on AZERTY: not undo.
-    command(&mut app, KeyCode::KeyZ, "w");
-    assert_eq!(app.resources.expect::<String>(), "azerty", "Cmd+W is not undo");
+    // Only where Command is the Command key: elsewhere it is Ctrl, and egui's Ctrl+W deletes the
+    // word before the cursor (emacs binding), which is not what this step is about.
+    if cfg!(any(target_os = "macos", target_os = "ios")) {
+        command(&mut app, KeyCode::KeyZ, "w");
+        assert_eq!(app.resources.expect::<String>(), "azerty", "Cmd+W is not undo");
+    }
     // Command + the key labelled Z (QWERTY's W position): undo, as in native apps.
     command(&mut app, KeyCode::KeyW, "z");
     assert_eq!(app.resources.expect::<String>(), "", "Cmd+Z undid the typing");
