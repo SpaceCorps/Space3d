@@ -66,9 +66,9 @@ fn build_event_loop() -> Result<EventLoop<()>, winit::error::EventLoopError> {
         use winit::platform::android::EventLoopBuilderExtAndroid;
         let Some(android_app) = crate::mobile::android_app() else {
             tracing::error!("Android: start the app through space3d_platform::android_main_entry");
-            return Err(winit::error::EventLoopError::NotSupported(
-                winit::error::NotSupportedError::new(),
-            ));
+            // `NotSupportedError::new` is private in winit 0.30; `ExitFailure` is the public error
+            // for "the loop cannot run".
+            return Err(winit::error::EventLoopError::ExitFailure(1));
         };
         EventLoop::builder().with_android_app(android_app).build()
     }
