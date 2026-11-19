@@ -45,7 +45,7 @@ jobs:
           sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libdbus-1-dev pkg-config mesa-vulkan-drivers
       # Shared runners are slower than the dev machine the CPU-time gates are calibrated on;
       # SPACE3D_PERF_BUDGET_SCALE is the documented knob (crates/space3d-particles).
-      - run: cargo test --workspace
+      - run: cargo test --workspace --no-fail-fast
         env:
           SPACE3D_PERF_BUDGET_SCALE: "4"
       - name: Upload screenshot diffs
@@ -109,5 +109,6 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.ndk.outputs.ndk-path }}
         run: |
           export CC_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/aarch64-linux-android35-clang
+          export AR_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$CC_aarch64_linux_android
           cargo check --target aarch64-linux-android -p space3d

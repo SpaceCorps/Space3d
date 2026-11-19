@@ -161,6 +161,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 }";
     let out = run_kernel(&r, body, &input, 6);
     use crate::rng::{particle_seed, pcg, range_exact, rnd};
+    // Software rasterizers (Mesa lavapipe on Linux CI) do not fuse `fma` the way hardware and the
+    // spec'd Rust `mul_add` do: there the exact-by-construction lifetime/delay may differ by one ulp.
+    let software = r.capabilities().adapter.device_type == wgpu::DeviceType::Cpu;
+    let same =
+        |got: f32, want: f32| got == want || (software && (got.to_bits() as i64 - want.to_bits() as i64).abs() <= 1);
     let mut oct_off = 0;
     for (i, &v) in input.iter().enumerate() {
         let i32_ = i as u32;
@@ -169,8 +174,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         assert_eq!(f32::from_bits(o[1]), rnd(v, i32_ % 19), "rnd({v})");
         let index = ((i32_ / 3) as u64) << 32 | (i32_.wrapping_mul(7919)) as u64;
         assert_eq!(o[2], particle_seed(v, index), "particle_seed({v}, {index})");
-        assert_eq!(f32::from_bits(o[3]), range_exact(v, 0, 0.25, 3.5), "life({v})");
-        assert_eq!(f32::from_bits(o[4]), range_exact(v, 12, 0.0, 0.1), "delay({v})");
+        let want = range_exact(v, 0, 0.25, 3.5);
+        assert!(
+            same(f32::from_bits(o[3]), want),
+            "life({v}): {} vs {want}",
+            f32::from_bits(o[3])
+        );
+        let want = range_exact(v, 12, 0.0, 0.1);
+        assert!(
+            same(f32::from_bits(o[4]), want),
+            "delay({v}): {} vs {want}",
+            f32::from_bits(o[4])
+        );
         let n = Vec3::new(
             (i32_ % 7) as f32 - 3.25,
             (i32_ % 5) as f32 - 2.25,
