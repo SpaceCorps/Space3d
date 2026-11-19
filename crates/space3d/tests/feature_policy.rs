@@ -20,7 +20,9 @@ const ALLOWED: [&str; 1] = ["space3d-assets?/render"];
 
 #[test]
 fn the_facade_has_no_new_weak_dependency_features() {
-    let features = MANIFEST
+    // Windows checkouts may have CRLF line endings.
+    let manifest = MANIFEST.replace("\r\n", "\n");
+    let features = manifest
         .split("\n[features]\n")
         .nth(1)
         .expect("a [features] table")
