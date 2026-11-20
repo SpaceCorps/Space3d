@@ -12,5 +12,6 @@ tdir="$(cargo metadata --format-version 1 --no-deps | node -e 'let s="";process.
 for id in $ids; do
   out="$root/site/public/play/$id"; mkdir -p "$out"
   wasm-bindgen --target web --no-typescript --out-name "$id" --out-dir "$out" "$tdir/wasm32-unknown-unknown/release/$id.wasm"
-  if command -v wasm-opt >/dev/null; then wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-simd --enable-reference-types -o "$out/${id}_bg.wasm" "$out/${id}_bg.wasm"; fi
+  # Opt-in: wasm-opt -Oz currently breaks startup (externref table cannot grow); gzip covers size.
+  if [ -n "${WASM_OPT:-}" ] && command -v wasm-opt >/dev/null; then wasm-opt -Oz --enable-bulk-memory --enable-nontrapping-float-to-int --enable-sign-ext --enable-mutable-globals --enable-simd --enable-reference-types -o "$out/${id}_bg.wasm" "$out/${id}_bg.wasm"; fi
 done
