@@ -171,7 +171,9 @@ mod tests {
         // Windows joins paths with a backslash.
         let shown = stories_cmd(&ctx(), &project(), &args, "stories")
             .display()
-            .replace('\\', "/");
+            .replace('\\', "/")
+            // Windows paths get shell-quoted by `display()`.
+            .replace('\'', "");
         assert!(
             shown.ends_with("run -p demo --bin stories -- --headless --out /games/demo/shots --filter Cube"),
             "{shown}"

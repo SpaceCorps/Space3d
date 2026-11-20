@@ -50,6 +50,8 @@ jobs:
       - run: cargo test --workspace --no-fail-fast
         env:
           SPACE3D_NO_GPU: "1"
+          # Shared runners are slower than the dev machine the timing gates are calibrated on.
+          SPACE3D_PERF_BUDGET_SCALE: "4"
       - name: Upload screenshot diffs
         if: failure()
         uses: actions/upload-artifact@v4

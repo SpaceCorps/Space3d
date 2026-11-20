@@ -312,10 +312,16 @@ fn load_test_smoke_over_real_sockets() {
         }
     });
     let (ps, play, metrics) = rx.recv_timeout(Duration::from_secs(10)).expect("server ready");
+    // Shared CI runners (macOS: 100+ ms RTT, skipped ticks) deliver fewer snapshots: relax the
+    // rate by the documented `SPACE3D_PERF_BUDGET_SCALE`.
+    let scale: f64 = std::env::var("SPACE3D_PERF_BUDGET_SCALE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(1.0);
     let slo = Slo {
         connect_success: 1.0,
-        tick_p99_ms: Some(50.0),
-        snapshot_rate: 0.5,
+        tick_p99_ms: Some(50.0 * scale),
+        snapshot_rate: 0.5 / scale,
         max_unexpected_disconnects: 0,
     };
     let protocol: fn(&mut App) = |app| {
