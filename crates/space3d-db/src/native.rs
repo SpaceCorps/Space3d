@@ -59,7 +59,7 @@ impl Worker {
         let depth = self.depth.clone();
         depth.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let job: Job = Box::new(move |conn| {
-            let _done = DepthGuard(depth);
+            let done = DepthGuard(depth);
             let result = match conn {
                 Ok(conn) => catch_unwind(AssertUnwindSafe(|| f(conn))).unwrap_or_else(|p| {
                     let msg = p
@@ -71,6 +71,9 @@ impl Worker {
                 }),
                 Err(msg) => Err(DbError::Open(msg.clone())),
             };
+            // Count the job as finished before its result is observable: whoever sees the result
+            // must also see the queue depth without this job.
+            drop(done);
             let _ = otx.send(result);
         });
         // If the worker is gone the job (and `otx`) is dropped: the receiver reports WorkerGone.
