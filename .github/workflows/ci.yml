@@ -54,7 +54,7 @@ jobs:
           SPACE3D_PERF_BUDGET_SCALE: "4"
       - name: Upload screenshot diffs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: screenshot-diffs-${{ matrix.os }}
           path: "**/__screenshots__/**/*.{actual,diff}.png"
