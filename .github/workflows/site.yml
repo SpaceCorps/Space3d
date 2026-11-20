@@ -85,7 +85,7 @@ jobs:
           docker run -d --name s3d -p 8080:8080             -v "$PWD/site/dist:/usr/share/nginx/html:ro"             -v "$PWD/site/nginx.conf:/etc/nginx/conf.d/default.conf:ro"             nginxinc/nginx-unprivileged:stable-alpine
           sleep 3
           fail=0
-          for p in / /docs /docs/ /docs.html /docs/getting-started/ /docs/graphics/frame/ /examples.html /llms.txt; do
+          for p in / /play/editor/ /docs /docs/ /docs.html /docs/getting-started/ /docs/graphics/frame/ /examples.html /llms.txt; do
             code=$(curl -s -o /dev/null -w '%{http_code}' -L "http://localhost:8080$p")
             echo "$code $p"; [ "$code" = 200 ] || fail=1
           done

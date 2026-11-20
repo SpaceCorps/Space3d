@@ -1,0 +1,10 @@
+[package]
+name = "web_editor"
+description = "Space3d example: the full editor (hierarchy, inspector, gizmos, texture and model editors) running in the browser"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+space3d = { workspace = true, features = ["editor"] }

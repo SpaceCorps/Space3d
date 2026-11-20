@@ -55,21 +55,27 @@ const parsed = files.map((f) => {
   return { f, md, title };
 });
 
+// The nine top-level guides are ONE page (/docs/), a section each; the reference pages stay separate.
+const MAIN = ["getting-started.md", "platforms.md", "graphics.md", "networking.md", "server.md", "testing.md", "ui.md", "storybook.md", "performance.md"].filter((f) => files.includes(f));
+const isMain = (f) => MAIN.includes(f);
+const urlOf = (f) => (isMain(f) ? `/docs/#${slugOf(f)}` : `/docs/${slugOf(f)}/`);
+
 function fixLink(href, from) {
-  if (/^(https?:|mailto:|#)/.test(href)) return href;
+  if (/^(https?:|mailto:)/.test(href)) return href;
+  if (href.startsWith("#")) return isMain(from) ? `#${slugOf(from)}--${href.slice(1)}` : href;
   const [path, hash = ""] = href.split("#");
   const frag = hash ? "#" + hash : "";
   const target = posix.normalize(posix.join(posix.dirname(from), path)); // relative to docs/
   if (target.startsWith("..")) {
     return `${GH}/blob/main/${posix.normalize(posix.join("docs", posix.dirname(from), path))}${frag}`;
   }
+  if (isMain(target)) return `/docs/#${slugOf(target)}${hash ? "--" + hash : ""}`;
   if (target.endsWith(".md") && files.includes(target)) return `/docs/${slugOf(target)}/${frag}`;
   return `${GH}/blob/main/docs/${target}${frag}`;
 }
 
 const groups = [
-  ["Start", ["getting-started.md", "platforms.md", "testing.md", "storybook.md"]],
-  ["Engine", ["graphics.md", "ui.md", "networking.md", "server.md", "performance.md"]],
+  ["Guides (one page)", MAIN],
   ["Graphics reference", files.filter((f) => f.startsWith("graphics/"))],
   ["Design documents", files.filter((f) => f.startsWith("design/"))],
 ];
@@ -85,14 +91,25 @@ const sidebar = (cur) =>
       ([g, l]) =>
         `<h4>${g}</h4><ul>${l
           .filter((f) => titles[f])
-          .map((f) => `<li><a href="/docs/${slugOf(f)}/"${f === cur ? ' aria-current="page"' : ""}>${esc(titles[f])}</a></li>`)
+          .map((f) => `<li><a href="${isMain(f) && cur === "all" ? "#" + slugOf(f) : urlOf(f)}"${f === cur ? ' aria-current="page"' : ""}>${esc(titles[f])}</a></li>`)
           .join("")}</ul>`,
     )
     .join("")}</nav>`;
 
 rmSync(outDir, { recursive: true, force: true });
 const searchIndex = [];
+const sections = [];
+const write = (rel, html) => {
+  const out = join(outDir, rel, "index.html");
+  mkdirSync(dirname(out), { recursive: true });
+  writeFileSync(out, html);
+};
+const wrap = (title, desc, inner) =>
+  `${top.replace("@TITLE@", () => esc(title)).replace("@DESC@", () => esc(desc))}<main id="main" class="wrap doc-layout">\n${inner}\n</main>\n${bottom}`;
+
 for (const { f, md, title } of parsed) {
+  const main = isMain(f);
+  const slug = slugOf(f);
   const toc = [];
   const used = new Set();
   const marked = new Marked({
@@ -111,6 +128,13 @@ for (const { f, md, title } of parsed) {
           i = 1;
         while (used.has(id)) id = `${base}-${i++}`;
         used.add(id);
+        if (main) {
+          // One page: ids are namespaced by section, the section's # title becomes the section heading.
+          const full = depth === 1 ? slug : `${slug}--${id}`;
+          if (depth === 2) toc.push([full, text.replace(/[`*]/g, "")]);
+          const d = Math.min(depth + 1, 6);
+          return `<h${d} id="${full}"${depth === 1 ? ' class="sec-title"' : ""}><a class="anchor" href="#${full}" aria-label="Link to this section">#</a>${inner}</h${d}>\n`;
+        }
         if (depth === 2) toc.push([id, text.replace(/[`*]/g, "")]);
         return `<h${depth} id="${id}"><a class="anchor" href="#${id}" aria-label="Link to this section">#</a>${inner}</h${depth}>\n`;
       },
@@ -122,7 +146,7 @@ for (const { f, md, title } of parsed) {
       image({ href, text }) {
         const p = posix.normalize(posix.join("docs", posix.dirname(f), href));
         const src = /^https?:/.test(href) ? href : `https://raw.githubusercontent.com/SpaceCorps/Space3d/main/${p}`;
-        return `<img src="${esc(src)}" alt="${esc(text)}" loading="lazy">`;
+        return `<img src="${esc(src)}" alt="${esc(text)}"${main ? "" : ' loading="lazy"'}>`;
       },
       code({ text, lang }) {
         const l = (lang ?? "").split(/\s/)[0];
@@ -141,25 +165,45 @@ for (const { f, md, title } of parsed) {
   const body = marked.parse(md);
   const desc = (md.match(/^(?!#|\s|[-*>|`])(.{40,})$/m)?.[1] ?? title).replace(/[`*[\]]/g, "").slice(0, 200);
   const plain = body.replace(/<pre>[\s\S]*?<\/pre>/g, " ").replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/g, " ").replace(/\s+/g, " ");
-  searchIndex.push({ s: slugOf(f), t: title, h: toc.map(([id, t]) => [id, t]), x: plain.slice(0, 6000) });
+  searchIndex.push({ s: slug, u: main ? "/docs/" : `/docs/${slug}/`, t: title, h: toc, x: plain.slice(0, 6000) });
+  if (main) {
+    sections.push({ f, slug, title, body, toc });
+    // The old per-section URL keeps working: it forwards to the section on the one page.
+    write(
+      slug,
+      `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc(title)} — Space3d docs</title><link rel="canonical" href="https://space3d.dev/docs/#${slug}"><meta http-equiv="refresh" content="0; url=/docs/#${slug}"><script>location.replace("/docs/#${slug}")</script></head><body><p>Moved to <a href="/docs/#${slug}">${esc(title)}</a>.</p></body></html>`,
+    );
+    continue;
+  }
   const k = order.indexOf(f);
-  const pn = (g, lab) => (g ? `<a class="${lab === "Previous" ? "prev" : "next"}" href="/docs/${slugOf(g)}/" rel="${lab === "Previous" ? "prev" : "next"}"><small>${lab}</small><span>${esc(titles[g])}</span></a>` : "<span></span>");
+  const pn = (g, lab) => (g ? `<a class="${lab === "Previous" ? "prev" : "next"}" href="${urlOf(g)}" rel="${lab === "Previous" ? "prev" : "next"}"><small>${lab}</small><span>${esc(titles[g])}</span></a>` : "<span></span>");
   const pager = `<nav class="doc-pager" aria-label="Previous and next">${pn(order[k - 1], "Previous")}${pn(order[k + 1], "Next")}</nav>`;
   const tocHtml =
     toc.length > 2
       ? `<aside class="doc-toc" aria-label="On this page"><h4>On this page</h4><ul>${toc.map(([id, t]) => `<li><a href="#${id}">${esc(t)}</a></li>`).join("")}</ul></aside>`
       : "";
-  const page = `${top.replace("@TITLE@", () => esc(title) + " — Space3d docs").replace("@DESC@", () => esc(desc))}<main id="main" class="wrap doc-layout">
-${sidebar(f)}
-<article class="doc">${body}<p class="doc-edit"><a href="${GH}/edit/main/docs/${f}">Edit this page on GitHub</a></p>${pager}</article>
-${tocHtml}
-</main>
-${bottom}`;
-  const out = join(outDir, slugOf(f), "index.html");
-  mkdirSync(dirname(out), { recursive: true });
-  writeFileSync(out, page);
+  write(
+    slug,
+    wrap(`${title} — Space3d docs`, desc, `${sidebar(f)}\n<article class="doc">${body}<p class="doc-edit"><a href="${GH}/edit/main/docs/${f}">Edit this page on GitHub</a></p>${pager}</article>\n${tocHtml}`),
+  );
 }
+
+// The one page: all nine guides, sidebar of sections, right-hand outline of the section in view.
+const art = sections
+  .map((x) => `<section class="doc-sec" id="sec-${x.slug}" data-sec="${x.slug}">${x.body}<p class="doc-edit"><a href="${GH}/edit/main/docs/${x.f}">Edit this section on GitHub</a></p></section>`)
+  .join("\n");
+const outline = sections
+  .map((x) => `<ul data-for="${x.slug}" hidden>${x.toc.map(([id, t]) => `<li><a href="#${id}">${esc(t)}</a></li>`).join("")}</ul>`)
+  .join("");
+write(
+  "",
+  wrap(
+    "Space3d docs",
+    "Everything about building with Space3d on one page: getting started, platforms, graphics, networking, server, testing, UI, storybook and performance.",
+    `${sidebar("all")}\n<article class="doc doc-all">${art}</article>\n<aside class="doc-toc" aria-label="On this page"><h4>On this page</h4>${outline}</aside>`,
+  ),
+);
 mkdirSync(join(site, "public"), { recursive: true });
 writeFileSync(join(site, "public", "docs-search.json"), JSON.stringify(searchIndex));
 writeFileSync(join(outDir, "index.json"), JSON.stringify(parsed.map(({ f, title }) => ({ slug: slugOf(f), title })), null, 1));
-console.log(`docs: ${files.length} pages -> site/docs/`);
+console.log(`docs: ${files.length} pages (${sections.length} guides on one page) -> site/docs/`);

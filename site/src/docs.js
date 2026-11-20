@@ -36,7 +36,7 @@ if (input && box) {
     box.hidden = false;
     box.innerHTML = hits.length
       ? hits.slice(0, 8).map(({ d, section, snippet }) =>
-          `<a role="option" href="/docs/${d.s}/${section ? "#" + section[0] : ""}"><strong>${esc(d.t)}</strong>${section ? `<em>${esc(section[1])}</em>` : ""}${snippet ? `<small>…${esc(snippet)}…</small>` : ""}</a>`).join("")
+          `<a role="option" href="${d.u}${section ? "#" + section[0] : d.u === "/docs/" ? "#" + d.s : ""}"><strong>${esc(d.t)}</strong>${section ? `<em>${esc(section[1])}</em>` : ""}${snippet ? `<small>…${esc(snippet)}…</small>` : ""}</a>`).join("")
       : `<p>No results for “${esc(input.value.trim())}”.</p>`;
   };
   input.addEventListener("input", run);
@@ -49,14 +49,35 @@ if (input && box) {
   });
 }
 
-const links = [...document.querySelectorAll(".doc-toc a")];
-if (links.length && "IntersectionObserver" in window) {
-  const byId = new Map(links.map((a) => [a.getAttribute("href").slice(1), a]));
-  const io = new IntersectionObserver((es) => {
-    for (const e of es) if (e.isIntersecting) {
-      links.forEach((a) => a.removeAttribute("aria-current"));
-      byId.get(e.target.id)?.setAttribute("aria-current", "true");
-    }
-  }, { rootMargin: "-80px 0px -70% 0px" });
-  for (const id of byId.keys()) { const h = document.getElementById(id); if (h) io.observe(h); }
+// Scrollspy. One-page docs: the sidebar follows the section in view and the right-hand outline
+// shows that section's headings; separate pages: the outline highlights the heading in view.
+const all = document.querySelector(".doc-all");
+if ("IntersectionObserver" in window) {
+  const mark = (links, id) => {
+    links.forEach((a) => a.removeAttribute("aria-current"));
+    links.find((a) => a.getAttribute("href") === "#" + id)?.setAttribute("aria-current", "true");
+  };
+  if (all) {
+    const side = [...document.querySelectorAll(".doc-nav a[href^='#']")];
+    const lists = [...document.querySelectorAll(".doc-toc ul[data-for]")];
+    const outline = [...document.querySelectorAll(".doc-toc a")];
+    const show = (slug) => { lists.forEach((u) => (u.hidden = u.dataset.for !== slug)); mark(side, slug); };
+    const secs = [...all.querySelectorAll(".doc-sec")];
+    const sio = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) show(e.target.dataset.sec); }, { rootMargin: "-80px 0px -75% 0px" });
+    secs.forEach((x) => sio.observe(x));
+    show(secs[0]?.dataset.sec);
+    const hio = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) mark(outline, e.target.id); }, { rootMargin: "-80px 0px -70% 0px" });
+    for (const a of outline) { const h = document.getElementById(a.getAttribute("href").slice(1)); if (h) hio.observe(h); }
+  } else {
+    const links = [...document.querySelectorAll(".doc-toc a")];
+    const io = new IntersectionObserver((es) => { for (const e of es) if (e.isIntersecting) mark(links, e.target.id); }, { rootMargin: "-80px 0px -70% 0px" });
+    for (const a of links) { const h = document.getElementById(a.getAttribute("href").slice(1)); if (h) io.observe(h); }
+  }
+}
+
+// One long page: images above the target change the layout as they load, so land on the hash again
+// once everything is in.
+if (all && location.hash.length > 1) {
+  const again = () => document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView();
+  addEventListener("load", again, { once: true });
 }

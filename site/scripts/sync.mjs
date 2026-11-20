@@ -21,8 +21,9 @@ console.log(`sync: ${docs.length} docs -> llms-full.txt (${body.length} bytes)`)
 const examples = JSON.parse(readFileSync(join(root, "site", "examples.json"), "utf8"));
 const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;");
 for (const e of examples) {
-  mkdirSync(join(pub, "play", e.id), { recursive: true });
-  writeFileSync(join(pub, "play", e.id, "index.html"), `<!doctype html>
+  const dir = e.path ?? e.id;
+  mkdirSync(join(pub, "play", dir), { recursive: true });
+  writeFileSync(join(pub, "play", dir, "index.html"), `<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <title>${esc(e.title)} — Space3d</title><link rel="icon" href="/favicon.svg">
@@ -30,14 +31,16 @@ for (const e of examples) {
 @font-face{font-family:"Geist Variable";font-display:swap;font-weight:100 900;src:url("/fonts/geist-latin.woff2") format("woff2-variations")}
 @font-face{font-family:"Geist Mono Variable";font-display:swap;font-weight:100 900;src:url("/fonts/geist-mono-latin.woff2") format("woff2-variations")}
 html,body{margin:0;height:100%;background:#04070a;color:#fafafa;font:14px "Geist Variable",system-ui,sans-serif;overflow:hidden;overscroll-behavior:none}
-canvas#space3d{display:block;width:100vw!important;height:100vh!important;height:100dvh!important;touch-action:none;outline:none}
-#bar{position:fixed;left:12px;top:max(12px,env(safe-area-inset-top));display:flex;gap:10px;align-items:center;padding:6px 14px 6px 6px;border-radius:99px;background:rgb(4 7 10 / .72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgb(255 255 255 / .16);pointer-events:none;font-weight:600}
+/* The engine attaches to #space3d if present, else appends its own canvas to <body>: fill the viewport either way. */
+canvas{position:fixed;inset:0;display:block;width:100vw!important;height:100vh!important;height:100dvh!important;touch-action:none;outline:none}
+#bar{z-index:10;position:fixed;left:12px;top:max(12px,env(safe-area-inset-top));display:flex;gap:10px;align-items:center;padding:6px 14px 6px 6px;border-radius:99px;background:rgb(4 7 10 / .72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgb(255 255 255 / .16);pointer-events:none;font-weight:600}
 #bar a{pointer-events:auto;display:inline-flex;align-items:center;min-height:32px;padding:0 12px;border-radius:99px;background:#00cc92;color:#000;text-decoration:none;font-weight:600}
 #bar a:hover{box-shadow:0 0 0 3px rgb(0 204 146 / .3)}
 #bar a:focus-visible{outline:2px solid #fff;outline-offset:2px}
-#status{position:fixed;left:12px;bottom:max(12px,env(safe-area-inset-bottom));max-width:calc(100vw - 24px);padding:8px 14px;border-radius:12px;background:rgb(4 7 10 / .72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgb(255 255 255 / .16);color:#cfcfd6;font:12px/1.5 "Geist Mono Variable",ui-monospace,monospace;pointer-events:none}
-</style></head><body>
-<canvas id="space3d" tabindex="0"></canvas>
+body.editor #bar{left:auto;right:12px;top:auto;bottom:max(12px,env(safe-area-inset-bottom));padding:4px}
+body.editor #bar span,body.editor #status{display:none}
+#status{z-index:10;position:fixed;left:12px;bottom:max(12px,env(safe-area-inset-bottom));max-width:calc(100vw - 24px);padding:8px 14px;border-radius:12px;background:rgb(4 7 10 / .72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgb(255 255 255 / .16);color:#cfcfd6;font:12px/1.5 "Geist Mono Variable",ui-monospace,monospace;pointer-events:none}
+</style></head><body${e.chrome === "editor" ? ' class="editor"' : ""}>
 <div id="bar"><a href="/examples.html">← Examples</a><span>${esc(e.title)}</span></div>
 <div id="status">loading… (first load downloads the engine)</div>
 <script type="module">
