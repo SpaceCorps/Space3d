@@ -1,22 +1,37 @@
 <!doctype html>
 <html lang="en" class="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Space3d + Claude Code</title><meta name="description" content="Ready-to-use Claude Code integration for Space3d: plugin, skill and AGENTS.md template."><link rel="icon" href="/favicon.svg">
-<link rel="stylesheet" href="/src/site.css"></head><body>
-<header class="nav"><div class="wrap"><a class="brand" href="/">Space<b>3d</b></a>
-<a class="l" href="/claude-code.html" aria-current="page">Claude Code</a><a class="l" href="/examples.html">Examples</a><a class="l" href="/docs.html">Docs</a><a class="l" href="https://github.com/SpaceCorps/Space3d">GitHub</a></div></header>
-<main class="wrap"><section class="hero"><h1>Space3d for <em>Claude Code</em></h1>
-<p class="lead">Give Claude the engine's rules and the build–test–look loop, and let it build the game. Everything lives in the repo under <code>integrations/claude-code/</code>.</p></section>
-<h2>1. Install the plugin</h2><pre>/plugin marketplace add SpaceCorps/Space3d
-/plugin install space3d@space3d</pre>
-<p>Adds the <code>space3d-game</code> skill: scaffold, the edit → test → screenshot loop, and the engine's hard rules (fixed tick, never block the frame, wasm-clean).</p>
-<h2>2. Drop in the AGENTS.md</h2>
-<pre>curl -fsSL https://space3d.dev/claude/AGENTS.md -o AGENTS.md
-echo '@AGENTS.md' &gt; CLAUDE.md</pre>
-<p><a href="/claude/AGENTS.md">View the template</a> · <a href="/claude/SKILL.md">View the skill</a></p>
-<h2>3. Ask</h2>
-<pre>space3d new asteroids --template 3d
-claude "Make a top-down asteroid shooter. Add tests, run space3d test, show me a screenshot."</pre>
-<p>Claude can run, test and screenshot headless, so no window pops up. There is no MCP server yet; the <code>space3d</code> CLI is the tool surface.</p>
-<h2>For other agents</h2><p><a href="/llms.txt">llms.txt</a> indexes the docs; <a href="/llms-full.txt">llms-full.txt</a> is the README plus all docs in one file.</p></main>
-<footer><div class="wrap">Space3d is Apache-2.0 · <a href="https://github.com/SpaceCorps/Space3d">SpaceCorps/Space3d</a> · <a href="/llms.txt">llms.txt</a> · <a href="https://spacecorps.tech">SpaceCorps</a></div></footer>
+<title>Space3d + Claude Code</title><meta name="description" content="Ready-to-use Claude Code integration for Space3d: plugin, skill and AGENTS.md template."><link rel="icon" href="/favicon.svg" type="image/svg+xml"><meta name="theme-color" content="#04070a">
+<link rel="preload" href="/fonts/geist-latin.woff2" as="font" type="font/woff2" crossorigin>
+<script>try{var t=localStorage.getItem("s3d-theme");document.documentElement.classList.toggle("dark",t?t==="dark":!matchMedia("(prefers-color-scheme: light)").matches)}catch(e){document.documentElement.classList.add("dark")}</script>
+<link rel="stylesheet" href="/src/site.css"><script type="module" src="/src/site.js"></script></head><body><a class="skip" href="#main">Skip to content</a>
+<header class="nav"><div class="wrap">
+<a class="brand" href="/" aria-label="Space3d home"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M16 3.5l11 6.25v12.5L16 28.5 5 22.25V9.75z"/><path d="M16 16V28.5M16 16L5 9.75M16 16l11-6.25"/></svg><span>Space<b>3d</b></span></a>
+<nav class="nav-links" aria-label="Main"><a href="/claude-code.html" aria-current="page">Claude Code</a><a href="/examples.html">Examples</a><a href="/docs.html">Docs</a><a href="https://github.com/SpaceCorps/Space3d">GitHub</a></nav>
+<button class="icon-btn theme-btn" type="button" aria-label="Toggle dark mode"><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg></button>
+<details class="menu"><summary class="icon-btn" aria-label="Menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></summary>
+<div class="panel"><a href="/claude-code.html" aria-current="page">Claude Code</a><a href="/examples.html">Examples</a><a href="/docs.html">Docs</a><a href="https://github.com/SpaceCorps/Space3d">GitHub</a></div></details>
+</div></header>
+<main id="main" class="wrap">
+<div class="page-head"><p class="eyebrow"><span class="dot"></span>Integration</p><h1>Space3d for <span class="grad">Claude Code</span></h1>
+<p class="lead">Give Claude the engine's rules and the build–test–look loop, and let it build the game. Everything lives in the repo under <code>integrations/claude-code/</code>.</p></div>
+<div class="prose">
+<ol class="steps" style="margin-top:40px">
+<li class="rv"><h3>Install the plugin</h3><p>Adds the <code>space3d-game</code> skill: scaffold, the edit → test → screenshot loop, and the engine's hard rules (fixed tick, never block the frame, wasm-clean).</p><pre><code>/plugin marketplace add SpaceCorps/Space3d
+/plugin install space3d@space3d</code></pre></li>
+<li class="rv"><h3>Drop in the AGENTS.md</h3><pre><code>curl -fsSL https://space3d.dev/claude/AGENTS.md -o AGENTS.md
+echo '@AGENTS.md' &gt; CLAUDE.md</code></pre><p><a href="/claude/AGENTS.md">View the template</a> · <a href="/claude/SKILL.md">View the skill</a></p></li>
+<li class="rv"><h3>Ask</h3><pre><code>space3d new asteroids --template 3d
+claude "Make a top-down asteroid shooter. Add tests, run space3d test, show me a screenshot."</code></pre><p>Claude can run, test and screenshot headless, so no window pops up. There is no MCP server yet; the <code>space3d</code> CLI is the tool surface.</p></li>
+</ol>
+<h2>For other agents</h2><p><a href="/llms.txt">llms.txt</a> indexes the docs; <a href="/llms-full.txt">llms-full.txt</a> is the README plus all docs in one file.</p>
+</div></main>
+<footer class="foot"><div class="wrap">
+<div class="foot-grid">
+<div><a class="brand" href="/"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M16 3.5l11 6.25v12.5L16 28.5 5 22.25V9.75z"/><path d="M16 16V28.5M16 16L5 9.75M16 16l11-6.25"/></svg><span>Space<b>3d</b></span></a><p>A cross-platform 3D game engine in Rust, made to be driven by Claude Code.</p></div>
+<div><h4>Build</h4><ul><li><a href="/#quickstart">Quickstart</a></li><li><a href="/claude-code.html">Claude Code</a></li><li><a href="/examples.html">Examples</a></li><li><a href="/docs.html">Docs</a></li></ul></div>
+<div><h4>Project</h4><ul><li><a href="https://github.com/SpaceCorps/Space3d">GitHub</a></li><li><a href="https://github.com/SpaceCorps/Space3d/issues">Issues</a></li><li><a href="https://github.com/SpaceCorps/Space3d/blob/main/LICENSE">Licence</a></li></ul></div>
+<div><h4>For agents</h4><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li><li><a href="/claude/AGENTS.md">AGENTS.md template</a></li></ul></div>
+</div>
+<div class="foot-base"><span>Space3d is Apache-2.0.</span><span>Made by <a href="https://spacecorps.tech">SpaceCorps</a></span></div>
+</div></footer>
 </body></html>
