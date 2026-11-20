@@ -44,7 +44,7 @@ const top = chromeSrc
   .slice(0, headEnd)
   .replace(/<title>.*?<\/title>/s, "<title>@TITLE@</title>")
   .replace(/<meta name="description"[^>]*>/, '<meta name="description" content="@DESC@">')
-  .replace("</head>", '<link rel="stylesheet" href="/src/docs.css"></head>');
+  .replace("</head>", '<link rel="stylesheet" href="/src/docs.css"><script type="module" src="/src/docs.js"></script></head>');
 const bottom = chromeSrc.slice(footStart);
 
 const titles = {};
@@ -76,8 +76,10 @@ const groups = [
 const known = new Set(groups.flatMap(([, l]) => l));
 const rest = files.filter((f) => !known.has(f));
 if (rest.length) groups.push(["More", rest]);
+const order = groups.flatMap(([, l]) => l).filter((f) => titles[f]);
 const sidebar = (cur) =>
-  `<nav class="doc-nav" aria-label="Docs">${groups
+  `<button class="doc-drawer-btn" type="button" aria-expanded="false" aria-controls="doc-nav">Docs menu</button>
+<nav class="doc-nav" id="doc-nav" aria-label="Docs"><label class="doc-search"><span class="sr">Search the docs</span><input type="search" placeholder="Search the docs" autocomplete="off" spellcheck="false"></label><div class="doc-results" role="listbox" hidden></div>${groups
     .filter(([, l]) => l.length)
     .map(
       ([g, l]) =>
@@ -89,6 +91,7 @@ const sidebar = (cur) =>
     .join("")}</nav>`;
 
 rmSync(outDir, { recursive: true, force: true });
+const searchIndex = [];
 for (const { f, md, title } of parsed) {
   const toc = [];
   const used = new Set();
@@ -137,13 +140,18 @@ for (const { f, md, title } of parsed) {
   });
   const body = marked.parse(md);
   const desc = (md.match(/^(?!#|\s|[-*>|`])(.{40,})$/m)?.[1] ?? title).replace(/[`*[\]]/g, "").slice(0, 200);
+  const plain = body.replace(/<pre>[\s\S]*?<\/pre>/g, " ").replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/g, " ").replace(/\s+/g, " ");
+  searchIndex.push({ s: slugOf(f), t: title, h: toc.map(([id, t]) => [id, t]), x: plain.slice(0, 6000) });
+  const k = order.indexOf(f);
+  const pn = (g, lab) => (g ? `<a class="${lab === "Previous" ? "prev" : "next"}" href="/docs/${slugOf(g)}/" rel="${lab === "Previous" ? "prev" : "next"}"><small>${lab}</small><span>${esc(titles[g])}</span></a>` : "<span></span>");
+  const pager = `<nav class="doc-pager" aria-label="Previous and next">${pn(order[k - 1], "Previous")}${pn(order[k + 1], "Next")}</nav>`;
   const tocHtml =
     toc.length > 2
       ? `<aside class="doc-toc" aria-label="On this page"><h4>On this page</h4><ul>${toc.map(([id, t]) => `<li><a href="#${id}">${esc(t)}</a></li>`).join("")}</ul></aside>`
       : "";
   const page = `${top.replace("@TITLE@", () => esc(title) + " — Space3d docs").replace("@DESC@", () => esc(desc))}<main id="main" class="wrap doc-layout">
 ${sidebar(f)}
-<article class="doc">${body}<p class="doc-edit"><a href="${GH}/edit/main/docs/${f}">Edit this page on GitHub</a></p></article>
+<article class="doc">${body}<p class="doc-edit"><a href="${GH}/edit/main/docs/${f}">Edit this page on GitHub</a></p>${pager}</article>
 ${tocHtml}
 </main>
 ${bottom}`;
@@ -151,5 +159,7 @@ ${bottom}`;
   mkdirSync(dirname(out), { recursive: true });
   writeFileSync(out, page);
 }
+mkdirSync(join(site, "public"), { recursive: true });
+writeFileSync(join(site, "public", "docs-search.json"), JSON.stringify(searchIndex));
 writeFileSync(join(outDir, "index.json"), JSON.stringify(parsed.map(({ f, title }) => ({ slug: slugOf(f), title })), null, 1));
 console.log(`docs: ${files.length} pages -> site/docs/`);
