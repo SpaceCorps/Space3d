@@ -3,6 +3,7 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -43,11 +44,12 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libdbus-1-dev pkg-config mesa-vulkan-drivers
-      # Shared runners are slower than the dev machine the CPU-time gates are calibrated on;
-      # SPACE3D_PERF_BUDGET_SCALE is the documented knob (crates/space3d-particles).
+      # Hosted runners have no real GPU (lavapipe, WARP, paravirtual Metal): GPU tests render
+      # differently there or crash the driver, so they take their documented skip path
+      # (SPACE3D_NO_GPU, see space3d-render). Everything else runs. GPU tests run in `gpu-tests`.
       - run: cargo test --workspace --no-fail-fast
         env:
-          SPACE3D_PERF_BUDGET_SCALE: "4"
+          SPACE3D_NO_GPU: "1"
       - name: Upload screenshot diffs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -112,3 +114,22 @@ jobs:
           export AR_aarch64_linux_android=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/darwin-x86_64/bin/llvm-ar
           export CARGO_TARGET_AARCH64_LINUX_ANDROID_LINKER=$CC_aarch64_linux_android
           cargo check --target aarch64-linux-android -p space3d
+
+  # Optional: the GPU tests on a software Vulkan device (Mesa lavapipe). Known to differ from
+  # hardware in places (1-ulp / 1-LSB), so it reports but does not gate. Real GPU runners should
+  # run `cargo test --workspace` with SPACE3D_REQUIRE_GPU=1.
+  gpu-tests:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: System deps + software GPU (Mesa lavapipe)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libdbus-1-dev pkg-config mesa-vulkan-drivers
+      - run: cargo test --workspace --no-fail-fast
+        env:
+          SPACE3D_PERF_BUDGET_SCALE: "4"

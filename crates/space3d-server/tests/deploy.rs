@@ -316,7 +316,8 @@ fn the_kubernetes_config_restates_every_key_of_the_example() {
 
 /// Documents of a multi-document manifest.
 fn documents(yaml: &str) -> Vec<&str> {
-    yaml.split("\n---\n").collect()
+    // `\n---` without the trailing newline: Windows checkouts have CRLF line endings.
+    yaml.split("\n---").collect()
 }
 
 /// Regression: a draining game server is NotReady (`/readyz` 503) and Terminating, and Kubernetes

@@ -536,6 +536,9 @@ impl Renderer {
         surface: Option<wgpu::Surface<'static>>,
         mut config: RendererConfig,
     ) -> Result<Self, RenderError> {
+        if crate::gpu_disabled_by_env() {
+            return Err(RenderError::NoAdapter("SPACE3D_NO_GPU is set".into()));
+        }
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: config.power_preference,

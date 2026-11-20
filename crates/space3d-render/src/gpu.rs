@@ -703,6 +703,9 @@ mod tests {
 
     /// A device limited to 1 MiB buffers (skips without an adapter).
     fn small_device() -> Option<wgpu::Device> {
+        if crate::gpu_disabled_by_env() {
+            return None;
+        }
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
         let limits = wgpu::Limits {
@@ -718,6 +721,9 @@ mod tests {
     }
 
     fn device_queue() -> Option<(wgpu::Device, wgpu::Queue)> {
+        if crate::gpu_disabled_by_env() {
+            return None;
+        }
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
         let adapter = pollster::block_on(instance.request_adapter(&Default::default())).ok()?;
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {

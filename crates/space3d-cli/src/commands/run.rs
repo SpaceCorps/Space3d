@@ -168,7 +168,10 @@ mod tests {
             cargo: CargoSel::default(),
             args: vec![],
         };
-        let shown = stories_cmd(&ctx(), &project(), &args, "stories").display();
+        // Windows joins paths with a backslash.
+        let shown = stories_cmd(&ctx(), &project(), &args, "stories")
+            .display()
+            .replace('\\', "/");
         assert!(
             shown.ends_with("run -p demo --bin stories -- --headless --out /games/demo/shots --filter Cube"),
             "{shown}"

@@ -236,3 +236,18 @@ pub mod prelude {
         Bloom, CameraFrame, CubemapHandle, DirectionalShadow, EnvironmentLight, PostProcess, Skybox, Tonemapper,
     };
 }
+
+/// `SPACE3D_NO_GPU=1` makes adapter acquisition fail as if the machine had no GPU: every GPU
+/// test then takes its documented skip path. Used on hosted CI runners, whose software or
+/// paravirtual GPUs (lavapipe, WARP) crash or render differently from real hardware; real GPU
+/// runners and developers leave it unset.
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) fn gpu_disabled_by_env() -> bool {
+    std::env::var_os("SPACE3D_NO_GPU").is_some_and(|v| !v.is_empty() && v != "0")
+}
+
+/// Never set on the web.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn gpu_disabled_by_env() -> bool {
+    false
+}
