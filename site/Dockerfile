@@ -2,7 +2,7 @@
 #   docker build -f site/Dockerfile -t space3d-site .
 # Stage 1 builds the examples for the web (wasm), stage 2 the static site, stage 3 serves it.
 FROM rust:1-bookworm AS wasm
-RUN apt-get update && apt-get install -y --no-install-recommends nodejs binaryen \
+RUN apt-get update && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /repo
 COPY rust-toolchain.toml Cargo.toml Cargo.lock ./
