@@ -4,9 +4,9 @@ name: Site
 on:
   push:
     branches: [main]
-    paths: ["site/**", "docs/**", "integrations/**", "README.md", ".github/workflows/site.yml"]
+    paths: ["site/**", "docs/**", "integrations/**", "crates/**", "examples/**", "Cargo.lock", "README.md", ".github/workflows/site.yml"]
   pull_request:
-    paths: ["site/**", "docs/**", "integrations/**", "README.md", ".github/workflows/site.yml"]
+    paths: ["site/**", "docs/**", "integrations/**", "crates/**", "examples/**", "Cargo.lock", "README.md", ".github/workflows/site.yml"]
   workflow_call:
     inputs:
       version_tag: { type: string, required: false, default: "" }

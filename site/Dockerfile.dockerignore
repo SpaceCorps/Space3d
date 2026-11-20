@@ -3,3 +3,5 @@
 target
 .git
 .claude
+site/public/play
+site/dist

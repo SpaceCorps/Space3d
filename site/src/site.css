@@ -209,3 +209,8 @@ footer.foot{margin-top:clamp(72px,10vw,140px);border-top:1px solid var(--line);p
   .hero-shot,.hero-shot:hover{transform:none}
 }
 @media(forced-colors:active){.btn,.card,pre{border:1px solid CanvasText}}
+
+/* example cards */
+.card .tag.play{margin-left:8px;vertical-align:2px;color:var(--accent-text);border-color:color-mix(in oklab,var(--sc-green) 45%,transparent)}
+.card h3{display:flex;align-items:center;justify-content:space-between;gap:8px}
+a.card:hover .tag.play{background:var(--sc-green);color:var(--sc-green-foreground);border-color:var(--sc-green)}

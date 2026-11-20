@@ -11,22 +11,19 @@
 <details class="menu"><summary class="icon-btn" aria-label="Menu"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg></summary>
 <div class="panel"><a href="/claude-code.html">Claude Code</a><a href="/examples.html" aria-current="page">Examples</a><a href="/docs.html">Docs</a><a href="https://github.com/SpaceCorps/Space3d">GitHub</a></div></details>
 </div></header>
-<main id="main" class="wrap"><section class="page-head"><h1><em>Examples</em></h1>
-<p class="lead">Every example is a crate in <a href="https://github.com/SpaceCorps/Space3d/tree/main/examples">examples/</a>. Run one with <code>cargo run -p &lt;name&gt; --release</code>.</p></section>
+<main id="main" class="wrap"><section class="page-head"><p class="eyebrow"><span class="dot"></span>Live in your browser</p><h1><span class="grad">Examples</span></h1>
+<p class="lead">Every example runs right here in your browser (WebGPU, or WebGL2 as a fallback): tap one to play. Source: <a href="https://github.com/SpaceCorps/Space3d/tree/main/examples">examples/</a>. Native: <code>cargo run -p &lt;name&gt; --release</code>.</p></section>
 <div class="grid" style="margin-top:40px">
-<a class="card" href="https://github.com/SpaceCorps/Space3d/tree/main/examples/hello_cube"><h3>hello_cube</h3><p>The smallest complete game: a lit, rotating cube.</p></a>
-<a class="card" href="https://github.com/SpaceCorps/Space3d/tree/main/examples/pbr_showcase"><h3>pbr_showcase</h3><p>Materials and lighting in a top-down space scene.</p></a>
-<a class="card" href="https://github.com/SpaceCorps/Space3d/tree/main/examples/graphics_showcase"><h3>graphics_showcase</h3><p>Every graphics feature in one reference scene.</p></a>
-<a class="card" href="https://github.com/SpaceCorps/Space3d/tree/main/examples/post_processing"><h3>post_processing</h3><p>Bloom, FXAA, vignette, grain — toggled live.</p></a>
-<a class="card" href="https://github.com/SpaceCorps/Space3d/tree/main/examples/particles"><h3>particles</h3><p>The particle library in a small space battle.</p></a>
-<a class="card" href="https://github.com/SpaceCorps/Space3d/tree/main/examples/particles_stress"><h3>particles_stress</h3><p>Up to a million additive particles.</p></a>
-<a class="card" href="https://github.com/SpaceCorps/Space3d/tree/main/examples/instancing_million"><h3>instancing_million</h3><p>One million cubes in a single instance buffer.</p></a>
-<a class="card" href="https://github.com/SpaceCorps/Space3d/tree/main/examples/physics_playground"><h3>physics_playground</h3><p>Rapier rigid bodies on the fixed tick.</p></a>
-<a class="card" href="https://github.com/SpaceCorps/Space3d/tree/main/examples/multiplayer_arena"><h3>multiplayer_arena</h3><p>Server-authoritative arena with prediction (client + server).</p></a>
-<a class="card" href="https://github.com/SpaceCorps/Space3d/tree/main/examples/multiplayer_chat"><h3>multiplayer_chat</h3><p>WebSocket chat driven by engine tasks.</p></a>
-<a class="card" href="https://github.com/SpaceCorps/Space3d/tree/main/examples/async_loading"><h3>async_loading</h3><p>Streaming assets over HTTP without frame hitches.</p></a>
-<a class="card" href="https://github.com/SpaceCorps/Space3d/tree/main/examples/save_game"><h3>save_game</h3><p>Save slots and settings with space3d-db.</p></a>
-<a class="card" href="https://github.com/SpaceCorps/Space3d/tree/main/examples/web_demo"><h3>web_demo</h3><p>Browser-first demo, served by space3d serve.</p></a>
+<a class="card" href="/play/hello_cube/"><h3>Hello cube <span class="tag play">Play</span></h3><p>The smallest complete game: a lit, rotating cube.</p></a>
+<a class="card" href="/play/web_demo/"><h3>Web demo <span class="tag play">Play</span></h3><p>4,096 instanced cubes in a single draw call.</p></a>
+<a class="card" href="/play/pbr_showcase/"><h3>PBR showcase <span class="tag play">Play</span></h3><p>Materials, shadows and every blend mode in a top-down space scene.</p></a>
+<a class="card" href="/play/graphics_showcase/"><h3>Graphics showcase <span class="tag play">Play</span></h3><p>Every graphics feature in one reference scene.</p></a>
+<a class="card" href="/play/post_processing/"><h3>Post processing <span class="tag play">Play</span></h3><p>Bloom, FXAA, vignette, grain, grading — toggled live.</p></a>
+<a class="card" href="/play/particles/"><h3>Particles <span class="tag play">Play</span></h3><p>The particle library in a small space battle.</p></a>
+<a class="card" href="/play/particles_stress/"><h3>Particle stress <span class="tag play">Play</span></h3><p>Streaming additive glows; the web budget is capped.</p></a>
+<a class="card" href="/play/instancing_million/"><h3>Instancing <span class="tag play">Play</span></h3><p>A very large instance buffer with a travelling wave.</p></a>
+<a class="card" href="/play/physics_playground/"><h3>Physics playground <span class="tag play">Play</span></h3><p>Rapier rigid bodies on the fixed tick: drop things and watch.</p></a>
+<a class="card" href="/play/save_game/"><h3>Save game <span class="tag play">Play</span></h3><p>Collect coins; saves live in your browser's localStorage.</p></a>
 </div></main>
 <footer class="foot"><div class="wrap">
 <div class="foot-grid">

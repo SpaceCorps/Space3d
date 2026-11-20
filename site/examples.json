@@ -1,0 +1,12 @@
+[
+  { "id": "hello_cube", "title": "Hello cube", "blurb": "The smallest complete game: a lit, rotating cube.", "controls": "Space pauses the rotation" },
+  { "id": "web_demo", "title": "Web demo", "blurb": "4,096 instanced cubes in a single draw call.", "controls": "drag to orbit · wheel/pinch to zoom · tap to recolor · 1–3 patterns" },
+  { "id": "pbr_showcase", "title": "PBR showcase", "blurb": "Materials, shadows and every blend mode in a top-down space scene.", "controls": "drag to look around · wheel/pinch to zoom" },
+  { "id": "graphics_showcase", "title": "Graphics showcase", "blurb": "Every graphics feature in one reference scene.", "controls": "Q quality · 1 bloom · 2 shadows · 3 IBL · 4 distortion · C follow · arrows pan · wheel zoom" },
+  { "id": "post_processing", "title": "Post processing", "blurb": "Bloom, FXAA, vignette, grain, grading — toggled live.", "controls": "keys 1–9 toggle effects · T tonemapper" },
+  { "id": "particles", "title": "Particles", "blurb": "The particle library in a small space battle.", "controls": "watch the battle" },
+  { "id": "particles_stress", "title": "Particle stress", "blurb": "Streaming additive glows; the web budget is capped.", "controls": "watch the vortex" },
+  { "id": "instancing_million", "title": "Instancing", "blurb": "A very large instance buffer with a travelling wave.", "controls": "drag to orbit · wheel/pinch to zoom" },
+  { "id": "physics_playground", "title": "Physics playground", "blurb": "Rapier rigid bodies on the fixed tick: drop things and watch.", "controls": "click/tap drops a body · Space random · R rain · A/D orbit · wheel zoom" },
+  { "id": "save_game", "title": "Save game", "blurb": "Collect coins; saves live in your browser's localStorage.", "controls": "arrows/WASD move · F5 save · F9 load" }
+]
