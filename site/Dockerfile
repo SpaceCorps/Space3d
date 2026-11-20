@@ -10,7 +10,13 @@ COPY crates ./crates
 COPY examples ./examples
 COPY third_party ./third_party
 COPY site/examples.json site/scripts/build-play.sh ./site/
-RUN sed -i 's/$//' site/build-play.sh && mkdir -p site/scripts && mv site/build-play.sh site/scripts/     && rustup target add wasm32-unknown-unknown     && v="$(tr -d '' < Cargo.lock | grep -A1 '^name = "wasm-bindgen"$' | sed -n 's/^version = "\(.*\)"//p')"     && echo "wasm-bindgen $v" && cargo install wasm-bindgen-cli --locked --version "$v"     && bash site/scripts/build-play.sh
+# `tr -d '\r'`: checkouts made on Windows have CRLF line endings.
+RUN tr -d '\r' < site/build-play.sh > /tmp/build-play.sh \
+    && rustup target add wasm32-unknown-unknown \
+    && v="$(tr -d '\r' < Cargo.lock | grep -A1 '^name = "wasm-bindgen"$' | sed -n 's/^version = "\(.*\)"/\1/p')" \
+    && echo "wasm-bindgen $v" && cargo install wasm-bindgen-cli --locked --version "$v" \
+    && mkdir -p site/scripts && cp /tmp/build-play.sh site/scripts/build-play.sh \
+    && bash site/scripts/build-play.sh
 
 FROM node:24-slim AS build
 RUN corepack enable
