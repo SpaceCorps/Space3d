@@ -1,0 +1,27 @@
+name: GPU tests (software Vulkan)
+# Nightly / manual: the GPU tests on Mesa lavapipe. Known to differ from hardware (1-ulp / 1-LSB
+# in about 9 tests), so this is informational and kept out of push/PR checks. Real GPU runners
+# should run `cargo test --workspace` with SPACE3D_REQUIRE_GPU=1.
+on:
+  schedule:
+    - cron: "43 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gpu-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: System deps + software GPU (Mesa lavapipe)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libdbus-1-dev pkg-config mesa-vulkan-drivers
+      - run: cargo test --workspace --no-fail-fast
+        env:
+          SPACE3D_PERF_BUDGET_SCALE: "4"
