@@ -10,9 +10,7 @@ COPY crates ./crates
 COPY examples ./examples
 COPY third_party ./third_party
 COPY site/examples.json site/scripts/build-play.sh ./site/
-RUN rustup show active-toolchain || true; rustup target add wasm32-unknown-unknown \
-    && cargo install wasm-bindgen-cli --locked --version "$(awk '/name = "wasm-bindgen"$/{getline; gsub(/[version =\"]/,""); print; exit}' Cargo.lock)"
-RUN mkdir -p site/scripts && mv site/build-play.sh site/scripts/ && bash site/scripts/build-play.sh
+RUN sed -i 's/$//' site/build-play.sh && mkdir -p site/scripts && mv site/build-play.sh site/scripts/     && rustup target add wasm32-unknown-unknown     && v="$(tr -d '' < Cargo.lock | grep -A1 '^name = "wasm-bindgen"$' | sed -n 's/^version = "\(.*\)"//p')"     && echo "wasm-bindgen $v" && cargo install wasm-bindgen-cli --locked --version "$v"     && bash site/scripts/build-play.sh
 
 FROM node:24-slim AS build
 RUN corepack enable
