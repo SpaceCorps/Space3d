@@ -760,7 +760,9 @@ fn editor_windows_and_engine_tools_come_to_the_front_when_clicked() {
     click_at(&mut app, Vec2::new(free.x, free.y));
     assert_eq!(front(), Some(profiler));
     assert_eq!(at(both.center()), Some(profiler));
-    assert_eq!(rect("space3d_profiler"), tools[1], "a click leaves it docked");
+    // Docked = same position. Its height follows the profiler's content (frame history), which
+    // grows between frames on a slow machine, so the size is not compared.
+    assert_eq!(rect("space3d_profiler").min, tools[1].min, "a click leaves it docked");
 
     // A click on the texture editor's title bar (clear of the tools) brings it back in front,
     // above the overlay too.

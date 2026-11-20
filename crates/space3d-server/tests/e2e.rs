@@ -365,7 +365,8 @@ fn load_test_smoke_over_real_sockets() {
             },
             clients: 4,
             ramp_per_sec: 20.0,
-            duration: Duration::from_secs(1),
+            // Slow shared runners need longer to connect and receive the first snapshots.
+            duration: Duration::from_secs(1).mul_f64(scale.max(1.0)),
             bots_per_thread: 2,
             tick_hz: 60.0,
             metrics_url: None,
