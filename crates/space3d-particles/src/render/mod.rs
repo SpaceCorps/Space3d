@@ -1356,6 +1356,8 @@ impl RenderNode for ParticlesNode {
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext<'_>) {
+        // (a span of the kind the schedule opens round every system: the profiler lists it under the renderer's `render.prepare.nodes`)
+        let _span = tracing::trace_span!("system", name = "render.prepare.nodes.particles").entered();
         let before = self.capacities();
         let rebuilt = ctx
             .resources

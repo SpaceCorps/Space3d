@@ -22,6 +22,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libdbus-1-dev pkg-config mesa-vulkan-drivers
-      - run: cargo test --workspace --no-fail-fast
+      - run: cargo test --workspace --exclude hello_cube_mobile --no-fail-fast
         env:
           SPACE3D_PERF_BUDGET_SCALE: "4"

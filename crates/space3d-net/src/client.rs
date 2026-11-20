@@ -216,7 +216,7 @@ impl Http {
     /// Client with custom defaults.
     pub fn with_config(config: HttpConfig) -> Self {
         #[cfg(not(target_arch = "wasm32"))]
-        let client = reqwest::Client::builder()
+        let client = crate::tls::http_client_builder()
             .user_agent(config.user_agent.clone())
             .tcp_nodelay(true)
             // Drop idle pooled connections before servers close them (`HttpServer` closes idle

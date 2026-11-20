@@ -22,6 +22,14 @@ targets:
       properties:
         CFBundleDisplayName: "{{title}}"
         UILaunchScreen: {}
+        # The scene life cycle the iOS 27 SDK requires; the delegate is the engine's class
+        # (space3d-platform, src/ios.rs).
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+          UISceneConfigurations:
+            UIWindowSceneSessionRoleApplication:
+              - UISceneConfigurationName: Default
+                UISceneDelegateClassName: Space3dSceneDelegate
         UIRequiresFullScreen: true
         UIStatusBarHidden: true
         UISupportedInterfaceOrientations:

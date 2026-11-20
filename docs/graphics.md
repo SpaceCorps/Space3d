@@ -198,7 +198,9 @@ when there is room. ([frame.md](graphics/frame.md#dynamic-resolution))
 
 **Draw small models with fewer triangles.** `lod::simplify_to(&mesh, &extras, 0.25)` makes a
 coarser mesh; `MeshLod::new(radius, &[full, mid, low])` on the entity lets the renderer set its
-`Mesh3d` each frame from its size on screen (`LodSettings`). Shadow maps draw the same level.
+`Mesh3d` each frame from its size on screen (`LodSettings`). Shadow maps draw the same level. For
+thin parts (fins, plates) that clustering holes, `lod::simplify_edges(&mesh, &extras,
+&EdgeCollapse::to_ratio(&mesh, 0.3))` collapses edges by quadric error and keeps the outline.
 ([frame.md](graphics/frame.md#levels-of-detail))
 
 **Preview a ship in the UI.** A render target (`add_render_target_with(w, h,

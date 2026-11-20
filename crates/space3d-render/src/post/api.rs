@@ -50,7 +50,22 @@ pub struct PostProcess {
     pub color_grading: ColorGrading,
     /// ±1 LSB triangular dither before 8-bit quantization. Default true.
     pub dither: bool,
+    /// Display gamma: the sRGB-encoded display color raised to `1 / display_gamma`, after the
+    /// tonemapper and the whole grading (a player's brightness calibration). Above 1 the
+    /// shadows and midtones are brighter, below 1 darker; black and white stay. Unlike
+    /// [`Self::exposure`] it changes nothing before the tonemapper, so the bloom is the same at
+    /// every setting. Clamped to [`DISPLAY_GAMMA_RANGE`]. Default 1: the composite is exactly
+    /// the one without it (a uniform bit; no pipeline is built when it moves). CPU mirror:
+    /// [`apply_display_gamma`].
+    pub display_gamma: f32,
 }
+
+/// The range [`PostProcess::display_gamma`] is clamped to (NaN and infinities count as 1).
+/// At any value but 1 the display color is clamped to 0..1 before the power, so a float output
+/// with [`Tonemapper::None`] loses its values above 1 (the LDR grading clamps the same way).
+pub const DISPLAY_GAMMA_RANGE: (f32, f32) = (0.25, 4.0);
+
+pub use crate::output::apply_display_gamma;
 
 impl Default for PostProcess {
     fn default() -> Self {
@@ -67,6 +82,7 @@ impl Default for PostProcess {
             distortion: Distortion::default(),
             color_grading: ColorGrading::default(),
             dither: true,
+            display_gamma: 1.0,
         }
     }
 }
@@ -112,7 +128,8 @@ impl PostProcess {
     }
 
     /// Adjust only the performance-relevant fields to a tier: bloom mips and first-level height
-    /// (Low 4 / 270, Medium 6 / 540, High 7 / 720, Ultra 8 / 720), the FXAA quality when FXAA
+    /// (Low 4 / 270, Medium 6 / 540, High 7 / 720, Ultra 8 / 720) and its cheap filters
+    /// ([`Bloom::fast`]: Low and Medium, off above), the FXAA quality when FXAA
     /// is on, and no chromatic aberration on Low. [`GraphicsQuality::post`] applies the whole
     /// tier (anti-aliasing, auto exposure and lens effects too).
     pub fn with_quality(mut self, q: GraphicsQuality) -> Self {
@@ -124,6 +141,7 @@ impl PostProcess {
         };
         self.bloom.mip_count = mips;
         self.bloom.max_mip_height = height;
+        self.bloom.fast = q <= GraphicsQuality::Medium;
         if let AntiAliasing::Fxaa(_) = self.anti_aliasing {
             self.anti_aliasing = AntiAliasing::Fxaa(fxaa);
         }
@@ -136,6 +154,11 @@ impl PostProcess {
     /// Set [`Self::exposure`] (stops).
     pub fn with_exposure(mut self, stops: f32) -> Self {
         self.exposure = stops;
+        self
+    }
+    /// Set [`Self::display_gamma`] (1 = unchanged, above 1 brighter midtones).
+    pub fn with_display_gamma(mut self, gamma: f32) -> Self {
+        self.display_gamma = gamma;
         self
     }
     /// Enable auto exposure with these settings.
@@ -311,6 +334,14 @@ pub struct Bloom {
     /// with post pays nearly what the main view does for a glow a few pixels wide. 240 skips
     /// it for UI previews and thumbnails (docs/graphics/post.md, "Small views").
     pub min_rect_height: u32,
+    /// The cheap filters of the low tiers (default off; [`PostProcess::with_quality`] turns it
+    /// on for Low and Medium): the prefilter takes 4 bilinear taps of the scene and thresholds
+    /// their mean instead of thresholding 9 pixels each on its own, and the composite reads
+    /// level 0 with one bilinear tap instead of the 4-tap cubic B-spline. About a fifth of the
+    /// bloom and a third of the composite on an integrated GPU at 1080p; the price is what the
+    /// exact filters removed: a bright source of 1–2 px glows a little less and its glow can
+    /// vary by a few percent as it moves (docs/graphics/post.md).
+    pub fast: bool,
 }
 
 impl Default for Bloom {
@@ -332,6 +363,7 @@ impl Bloom {
             mip_count: 6,
             max_mip_height: 540,
             min_rect_height: 0,
+            fast: false,
         }
     }
     /// Photographic veil: threshold 0, energy-conserving 0.15, scatter 0.85.
@@ -358,6 +390,11 @@ impl Bloom {
     /// Set [`Self::scatter`].
     pub fn with_scatter(mut self, s: f32) -> Self {
         self.scatter = s;
+        self
+    }
+    /// Set [`Self::fast`].
+    pub fn with_fast(mut self, fast: bool) -> Self {
+        self.fast = fast;
         self
     }
     /// Set [`Self::min_rect_height`].
@@ -814,6 +851,11 @@ mod tests {
         assert_eq!((c.chromatic_aberration.intensity, c.film_grain.intensity), (0.15, 0.05));
         let low = c.with_quality(GraphicsQuality::Low);
         assert_eq!((low.bloom.mip_count, low.bloom.max_mip_height), (4, 270));
+        assert!(low.bloom.fast && c.with_quality(GraphicsQuality::Medium).bloom.fast);
+        let high = c
+            .with_bloom(Bloom::glow().with_fast(true))
+            .with_quality(GraphicsQuality::High);
+        assert!(!high.bloom.fast && !c.with_quality(GraphicsQuality::Ultra).bloom.fast);
         assert_eq!(low.anti_aliasing, AntiAliasing::Fxaa(FxaaQuality::Low));
         assert!(!low.chromatic_aberration.enabled);
         let n = Bloom::natural();

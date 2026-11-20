@@ -84,7 +84,7 @@ the game.
 | `material.rs` | P-MAT | `BlendMode`, `ShadowMode`, `MapMask`, `TextureTransform`, `MeshExtras` |
 | `lighting/api.rs` | P-MAT | cubemaps, `Skybox`, `EnvironmentLight`, `DirectionalShadow`, `LightingSettings` |
 | `post/api.rs` | P-POST | `PostProcess` and every post type, `DISTORTION_WGSL` |
-| `lod.rs` | F | `MeshLod`, `LodSettings`, the `lod` module (`simplify`, `simplify_to`, `UV_REACH`, `MAX_LOD_LEVELS`) |
+| `lod.rs` | F | `MeshLod`, `LodSettings`, the `lod` module (`simplify`, `simplify_to`, `simplify_edges`, `EdgeCollapse`, `UV_REACH`, `MAX_LOD_LEVELS`) |
 | `dynamic_resolution.rs` | F | `DynamicResolution` |
 
 Crate-internal contracts between the frame and the areas (spec §2.6) have fixed signatures:
@@ -207,6 +207,11 @@ Additions made by the foundation since F2 (additive):
     and of no other. `simplify` does not weld across texture seams or between vertices whose
     normals face different ways, and keeps a triangle and its reverse as two.
     ([frame.md](frame.md#levels-of-detail))
+  * Edge collapse: `lod::simplify_edges(&MeshData, &MeshExtras, &EdgeCollapse)` and the settings
+    `lod::EdgeCollapse { triangles, max_error, border_weight }` (`EdgeCollapse::to`,
+    `to_ratio`, `with_max_error`, `with_border_weight`), in `lod/collapse.rs`: a quadric-error
+    simplifier for thin parts that clustering holes. Additive; `simplify` and `simplify_to` are
+    as they were. ([frame.md](frame.md#levels-of-detail))
   * Levels that draw nothing: `MeshHandle::NONE` (with `MeshHandle::is_none()`), the handle of no
     mesh, which no view draws, and `MeshLod::from_levels(radius, &[Option<MeshHandle>])`.
     `MeshLod` keeps the level last asked for, and its `PartialEq` compares the levels and the

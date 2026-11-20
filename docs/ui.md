@@ -351,20 +351,24 @@ wrap width, also in a label after another widget in `horizontal_wrapped` (egui i
 first row; only that row can be left empty, when the label's first run doesn't fit after the
 widget). Upstream egui starts lines with "，" "？" "）" "、" and ends them with "「". Text
 without Chinese or Japanese characters lays out as with upstream egui (German „…“ quotes
-included), except for two rules of Unicode line breaking (UAX #14) that hold in every script and
+included), except for three rules of Unicode line breaking (UAX #14) that hold in every script and
 ellipses and doubled dashes: no line ends with an ASCII opening bracket `(` `[` `{` (also not
-with the spaces after it) and none starts with a no-break space U+00A0 unless a space comes
-before it — a chat line's company tag joined to the name with a no-break space
+with the spaces after it), none starts with a no-break space U+00A0 unless a space comes
+before it, and none breaks next to a word joiner U+2060 (or U+FEFF) unless a space is on the other
+side — a chat line's company tag joined to the name with a no-break space
 ("[T]\u{a0}Name:") moves to the next row whole and a name wider than a row breaks inside the
-name, where upstream left "[T]" alone ("[T]" | "\u{a0}Name:") or split it ("[" | "T] Name:");
+name, where upstream left "[T]" alone ("[T]" | "\u{a0}Name:") or split it ("[" | "T] Name:"), and
+a clan tag whose marks are glued to what follows with word joiners ("[A-\u{2060}B]") is not split
+("[A-" | "B]");
 no line starts with "…" after a word and "——" "……" are not split, so at narrow widths such
 text can wrap differently ("ove" | "r……" where upstream has "over" | "……"). Laying text out takes about 5 % longer for
 Latin text and 8–11 % for Chinese or Japanese than with upstream egui; egui caches laid-out
 text, so this is paid only when a text or its width changes. The rules and their limits are in
 `third_party/README.md`; games that lay text out themselves can use them directly:
 `egui::epaint::text::kinsoku::{line_break, Break, is_line_start_prohibited,
-is_line_end_prohibited}` (`kinsoku::VERSION` is 4 with the UAX #14 rules; a game whose chat
-joins a tag to a name with a no-break space can assert `VERSION >= 4`).
+is_line_end_prohibited}` (`kinsoku::VERSION` is 5 with the word-joiner rule and 4 with the
+other two UAX #14 rules; a game whose chat joins a tag to a name with a no-break space can assert
+`VERSION >= 4`, one that glues a clan tag with word joiners `VERSION >= 5`).
 
 The rules live in a patched copy of egui's text layout crate, `epaint`, in
 `third_party/epaint`. Cargo applies a `[patch]` only from the **root** `Cargo.toml` of the
@@ -398,7 +402,7 @@ builds crates.io's epaint, without kinsoku. Check with:
   (or the local path), not a bare version;
 * a test in the game that only compiles with the patched epaint:
   `const _: u32 = space3d::ui::egui::epaint::text::kinsoku::VERSION;` (with the UAX #14 rules,
-  `const _: () = assert!(space3d::ui::egui::epaint::text::kinsoku::VERSION >= 4);`).
+  `const _: () = assert!(space3d::ui::egui::epaint::text::kinsoku::VERSION >= 5);`).
 
 When updating Space3d, bump the `rev` of both lines together. A game that carried its own
 `third_party/epaint` (as SpaceCorps did) replaces its `[patch.crates-io]` path with the git

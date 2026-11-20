@@ -33,7 +33,8 @@ struct BloomPass {
     // Prefilter: the soft threshold t, t − k, 2k, 0.25 / k (k = t × soft_knee; 0 for a hard
     // cut). Resample: the destination pixel's box in source pixels (w, h, 0, 0).
     threshold: vec4<f32>,
-    // x: multiply by 2^E (auto exposure). Resample: y, z = bilinear taps per axis.
+    // x: multiply by 2^E (auto exposure). Resample: y, z = bilinear taps per axis. Prefilter:
+    // w = 1 takes the cheap path (`Bloom::fast`).
     flags: vec4<u32>,
 }
 
@@ -169,6 +170,19 @@ fn fs_prefilter(in: FullscreenOut) -> @location(0) vec4<f32> {
     let hi = lo + vec2<i32>(bloom.src_rect.zw);
     let base = lo + vec2<i32>(in.pos.xy) * 2 - 1;
     let e = bloom_exposure_multiplier();
+    if (bloom.flags.w != 0u) {
+        // The low tiers (`Bloom::fast`): the same tent from 4 bilinear taps half a pixel
+        // around scene pixel 2i (each the mean of 2 × 2 pixels, so the 3 × 3 get the weights
+        // [1 2 1] / 4 per axis), then the exposure, threshold and limit once on the mean: 4
+        // fetches and one threshold instead of 9 and 9. A source of 1–2 pixels is averaged
+        // with its dark neighbours before the threshold, so it glows less and by an amount
+        // that depends on where it sits (what the per-pixel path above removes). At the rect's
+        // edge the taps repeat the edge pixels instead of reading 0.
+        let c = bloom.src_rect.xy + floor(in.pos.xy) * 2.0 + 0.5;
+        let mean = (bloom_tap_scene(c + vec2<f32>(-0.5, -0.5)) + bloom_tap_scene(c + vec2<f32>(0.5, -0.5))
+            + bloom_tap_scene(c + vec2<f32>(-0.5, 0.5)) + bloom_tap_scene(c + vec2<f32>(0.5, 0.5))) * 0.25;
+        return vec4<f32>(min(bloom_limit(bloom_threshold(mean * e)), vec3<f32>(S3D_BLOOM_MAX)), 1.0);
+    }
     var sum = vec3<f32>(0.0);
     for (var y = 0; y < 3; y += 1) {
         var row = vec3<f32>(0.0);

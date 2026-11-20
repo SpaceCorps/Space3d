@@ -307,7 +307,28 @@ pub struct Touch {
     pub delta: Vec2,
 }
 
-/// Gamepad buttons (stub layout; no backend is wired yet — inject for tests).
+/// Two fingers on the screen ([`Input::gesture`]): where they are and what they did this frame.
+/// The window runner fills it from the fingers when [`crate::touch_pointer::TouchMouse`] is on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TouchGesture {
+    /// The point between the fingers when the second one came down (physical pixels).
+    pub start: Vec2,
+    /// The point between the fingers now.
+    pub center: Vec2,
+    /// This frame: the fingers' distance over what it was (1.0: unchanged, above: apart).
+    pub zoom: f32,
+    /// This frame: how far the line between the fingers turned, in radians. Positive is
+    /// clockwise as seen on the screen (y points down).
+    pub rotate: f32,
+    /// This frame: how far the point between the fingers moved, in physical pixels.
+    pub pan: Vec2,
+    /// The gesture began this frame.
+    pub just_started: bool,
+}
+
+/// Gamepad buttons, named by their place on the pad (Xbox / PlayStation names in the
+/// comments). The window runner fills them from the OS ([`crate::gamepad`] on desktop, key
+/// events on Android); tests and scripts inject them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum GamepadButton {
     /// A / Cross.
@@ -334,6 +355,25 @@ pub enum GamepadButton {
     DPadLeft,
     /// D-pad right.
     DPadRight,
+    /// Left trigger as a button (LT / L2): down once the trigger is pulled half way.
+    LeftTrigger,
+    /// Right trigger as a button (RT / R2): down once the trigger is pulled half way.
+    RightTrigger,
+    /// Left stick pressed in (L3).
+    LeftThumb,
+    /// Right stick pressed in (R3).
+    RightThumb,
+    /// Guide / PS / Home.
+    Mode,
+}
+
+/// A gamepad was plugged in or went away this frame ([`Input::gamepad_changes`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GamepadChange {
+    /// The pad with this id is now there ([`Input::gamepad`]).
+    Connected(u32),
+    /// The pad with this id is gone: its buttons and axes with it.
+    Disconnected(u32),
 }
 
 /// Gamepad axes.
@@ -423,9 +463,14 @@ pub struct Gamepad {
     /// Buttons.
     pub buttons: ButtonState<GamepadButton>,
     axes: [f32; 6],
+    name: String,
 }
 
 impl Gamepad {
+    /// What the OS calls the pad ("Xbox 360 Controller"); empty when it gave no name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
     /// Axis value (-1..1 for sticks, 0..1 for triggers).
     pub fn axis(&self, axis: GamepadAxis) -> f32 {
         self.axes[axis.index()]
@@ -444,8 +489,12 @@ pub struct Input {
     started_touches: Vec<u64>,
     ended_touches: Vec<Touch>,
     cancelled_touches: Vec<Touch>,
+    gesture: Option<TouchGesture>,
+    /// The gesture's fingers lifted: it is this frame's last.
+    gesture_over: bool,
     text: String,
     gamepads: HashMap<u32, Gamepad>,
+    gamepad_changes: Vec<GamepadChange>,
     window_size: Vec2,
     key_events: Vec<KeyEvent>,
     logical_keys: HashMap<KeyCode, LogicalKey>,
@@ -544,6 +593,12 @@ impl Input {
     pub fn just_cancelled_touches(&self) -> &[Touch] {
         &self.cancelled_touches
     }
+    /// The two-finger gesture going on, with this frame's zoom, turn and pan (`None`: no two
+    /// fingers, or nothing turns fingers into gestures). The frame the fingers lift it is
+    /// still there, with what they did last.
+    pub fn gesture(&self) -> Option<&TouchGesture> {
+        self.gesture.as_ref()
+    }
     /// Text typed this frame.
     pub fn text(&self) -> &str {
         &self.text
@@ -552,9 +607,43 @@ impl Input {
     pub fn gamepad(&self, id: u32) -> Option<&Gamepad> {
         self.gamepads.get(&id)
     }
-    /// Connected gamepad ids.
+    /// Connected gamepad ids (in no order).
     pub fn gamepad_ids(&self) -> impl Iterator<Item = u32> + '_ {
         self.gamepads.keys().copied()
+    }
+    /// The pads plugged in and unplugged this frame, in order. Cleared in `end_frame`.
+    pub fn gamepad_changes(&self) -> &[GamepadChange] {
+        &self.gamepad_changes
+    }
+    /// `button` went down this frame on any pad.
+    pub fn any_gamepad_just_pressed(&self, button: GamepadButton) -> bool {
+        self.gamepads.values().any(|p| p.buttons.just_pressed(button))
+    }
+    /// `button` is held on any pad.
+    pub fn any_gamepad_pressed(&self, button: GamepadButton) -> bool {
+        self.gamepads.values().any(|p| p.buttons.pressed(button))
+    }
+    /// `axis` of the pad that pushes it furthest (0 without a pad).
+    pub fn any_gamepad_axis(&self, axis: GamepadAxis) -> f32 {
+        self.gamepads
+            .values()
+            .map(|p| p.axis(axis))
+            .fold(0.0, |best: f32, v| if v.abs() > best.abs() { v } else { best })
+    }
+    /// The stick (`x`, `y`: its two axes) of the pad that pushes it furthest, whole: with two
+    /// pads off their rest the answer is one pad's stick, never one pad's x beside the
+    /// other's y (which [`Self::any_gamepad_axis`] asked twice would give). Zero without a pad.
+    pub fn any_gamepad_stick(&self, x: GamepadAxis, y: GamepadAxis) -> Vec2 {
+        self.gamepads
+            .values()
+            .map(|p| Vec2::new(p.axis(x), p.axis(y)))
+            .fold(Vec2::ZERO, |best, v| {
+                if v.length_squared() > best.length_squared() {
+                    v
+                } else {
+                    best
+                }
+            })
     }
     /// Window size in physical pixels (for normalized touch regions).
     pub fn window_size(&self) -> Vec2 {
@@ -806,30 +895,72 @@ impl Input {
             }
         }
     }
+    /// A two-finger gesture begins with `center` between the fingers.
+    pub fn inject_gesture_start(&mut self, center: Vec2) {
+        self.gesture_over = false;
+        self.gesture = Some(TouchGesture {
+            start: center,
+            center,
+            zoom: 1.0,
+            rotate: 0.0,
+            pan: Vec2::ZERO,
+            just_started: true,
+        });
+    }
+    /// The fingers of a gesture moved: `zoom` multiplies this frame's, `rotate` and `pan` add
+    /// to it. Without a gesture going on, one begins at `center`.
+    pub fn inject_gesture(&mut self, zoom: f32, rotate: f32, pan: Vec2, center: Vec2) {
+        if self.gesture.is_none() || self.gesture_over {
+            self.inject_gesture_start(center - pan);
+        }
+        if let Some(g) = &mut self.gesture {
+            g.zoom *= zoom;
+            g.rotate += rotate;
+            g.pan += pan;
+            g.center = center;
+        }
+    }
+    /// The gesture's fingers lifted: it is gone after this frame.
+    pub fn inject_gesture_end(&mut self) {
+        self.gesture_over = self.gesture.is_some();
+    }
     /// Typed text (IME/committed characters).
     pub fn inject_text(&mut self, text: &str) {
         self.text.push_str(text);
     }
-    /// Connect a gamepad.
+    /// Connect a gamepad (no name).
     pub fn inject_gamepad_connected(&mut self, id: u32) {
-        self.gamepads.entry(id).or_default();
+        self.gamepad_entry(id);
     }
-    /// Disconnect a gamepad.
+    /// Connect a gamepad the OS calls `name`; a pad already there takes the name.
+    pub fn inject_gamepad_connected_named(&mut self, id: u32, name: &str) {
+        self.gamepad_entry(id).name = name.to_string();
+    }
+    /// Disconnect a gamepad: it is gone with everything it held (no release edges; see
+    /// [`Self::gamepad_changes`]).
     pub fn inject_gamepad_disconnected(&mut self, id: u32) {
-        self.gamepads.remove(&id);
+        if self.gamepads.remove(&id).is_some() {
+            self.gamepad_changes.push(GamepadChange::Disconnected(id));
+        }
     }
     /// Gamepad button (connects the pad if needed).
     pub fn inject_gamepad_button(&mut self, id: u32, button: GamepadButton, pressed: bool) {
-        let pad = self.gamepads.entry(id).or_default();
+        let pad = self.gamepad_entry(id);
         if pressed {
             pad.buttons.press(button);
         } else {
             pad.buttons.release(button);
         }
     }
-    /// Gamepad axis (connects the pad if needed).
+    /// Gamepad axis (connects the pad if needed). Sticks: right and **up** are positive.
     pub fn inject_gamepad_axis(&mut self, id: u32, axis: GamepadAxis, value: f32) {
-        self.gamepads.entry(id).or_default().axes[axis.index()] = value.clamp(-1.0, 1.0);
+        self.gamepad_entry(id).axes[axis.index()] = value.clamp(-1.0, 1.0);
+    }
+    fn gamepad_entry(&mut self, id: u32) -> &mut Gamepad {
+        if !self.gamepads.contains_key(&id) {
+            self.gamepad_changes.push(GamepadChange::Connected(id));
+        }
+        self.gamepads.entry(id).or_default()
     }
     /// Window resized (physical pixels).
     pub fn set_window_size(&mut self, size: Vec2) {
@@ -844,9 +975,18 @@ impl Input {
         for b in held {
             self.release_mouse_button(b, MouseButtonCause::FocusLost);
         }
+        // A pad's axes too: an unfocused window gets no pad input (Windows), so a stick held
+        // over would otherwise stay where it was.
         for pad in self.gamepads.values_mut() {
             pad.buttons.release_all();
+            pad.axes = [0.0; 6];
         }
+    }
+
+    /// Forget every active touch as cancelled (the app went to the background: the ends of
+    /// the touches that were down may never come). They are this frame's ended touches.
+    pub fn clear_touches(&mut self) {
+        self.ended_touches.append(&mut self.touches);
     }
 
     /// Clear per-frame edges and deltas (runs in `Stage::Last`).
@@ -858,6 +998,15 @@ impl Input {
         self.started_touches.clear();
         self.ended_touches.clear();
         self.cancelled_touches.clear();
+        if std::mem::take(&mut self.gesture_over) {
+            self.gesture = None;
+        }
+        if let Some(g) = &mut self.gesture {
+            g.zoom = 1.0;
+            g.rotate = 0.0;
+            g.pan = Vec2::ZERO;
+            g.just_started = false;
+        }
         self.text.clear();
         self.key_events.clear();
         self.mouse_button_events.clear();
@@ -867,6 +1016,7 @@ impl Input {
         for pad in self.gamepads.values_mut() {
             pad.buttons.end_frame();
         }
+        self.gamepad_changes.clear();
     }
 }
 
@@ -1064,6 +1214,19 @@ impl Plugin for InputPlugin {
         app.init_resource::<Input>()
             .init_resource::<ActionMap>()
             .init_resource::<ActionState>();
+        // Fingers as the mouse: off until a window or the game turns it on.
+        app.init_resource::<crate::touch_pointer::TouchMouse>();
+        app.add_system_ordered(
+            Stage::PreUpdate,
+            crate::touch_pointer::TouchMouse::ORDER,
+            "input::touch_mouse",
+            |ctx| {
+                ctx.resources
+                    .scope::<crate::touch_pointer::TouchMouse, _>(|res, mouse| {
+                        mouse.frame(res.expect_mut::<Input>());
+                    });
+            },
+        );
         app.add_system_named(Stage::PreUpdate, "input::update_actions", |ctx| {
             ctx.resources.scope::<ActionState, _>(|res, state| {
                 state.update(res.expect::<ActionMap>(), res.expect::<Input>());

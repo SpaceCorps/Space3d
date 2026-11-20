@@ -114,6 +114,15 @@ pub struct UiPlugin {
     /// Fixed physical pixels per egui point. `None` follows
     /// `space3d_platform::WindowState::scale_factor` (1.0 without a window).
     pub pixels_per_point: Option<f32>,
+    /// A phone's rule for the scale, used while `pixels_per_point` is `None`: the scale at which
+    /// the screen's short side is this many points (never below 1.0). A UI made for a laptop's
+    /// window then fits a phone, with small text. `None`: the window's own scale.
+    pub short_side_points: Option<f32>,
+    /// Lay the UI out inside `space3d_platform::SafeArea` (a phone's notch and home bar) and
+    /// not over the whole screen. Off by default. The insets are filled on Android and iOS (in
+    /// landscape UIKit's values were the portrait ones in the Simulator, and the runner turns
+    /// them: `space3d_platform::SafeArea::turned_for_landscape`).
+    pub inside_safe_area: bool,
     /// UI size in physical pixels when there is neither a renderer nor a window.
     pub fallback_size: (u32, u32),
     /// Dither egui's output to reduce banding (position-based, so still deterministic).
@@ -141,6 +150,8 @@ impl Default for UiPlugin {
     fn default() -> Self {
         Self {
             pixels_per_point: None,
+            short_side_points: None,
+            inside_safe_area: false,
             fallback_size: (1280, 720),
             dithering: true,
             animations: true,

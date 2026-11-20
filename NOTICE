@@ -4,6 +4,12 @@ Copyright 2026 SpaceCorps
 This product includes software developed by SpaceCorps
 (https://github.com/SpaceCorps/Space3d).
 
+Earlier revisions and other branches of this repository may still contain a
+LICENSE file with proprietary terms from the time before the source was
+published. SpaceCorps, the copyright holder, offers every revision and every
+branch of this repository under the Apache License, Version 2.0, whatever
+LICENSE file that revision contains. Third-party code keeps its own licence.
+
 third_party/epaint is a patched copy of the epaint crate from the egui
 project (https://github.com/emilk/egui), copyright Emil Ernerfeldt and the
 egui contributors, used under its "MIT OR Apache-2.0" licence. Its licence

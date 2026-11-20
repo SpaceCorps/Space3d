@@ -53,7 +53,11 @@ impl Default for GithubClient {
 impl GithubClient {
     /// Client for `api.github.com` with an optional token.
     pub fn new(token: Option<String>) -> Self {
+        #[cfg(not(target_os = "android"))]
         let builder = reqwest::Client::builder();
+        // Android: HTTPS checked against the compiled-in roots (see `space3d_net::http_client_builder`).
+        #[cfg(target_os = "android")]
+        let builder = space3d_net::http_client_builder();
         #[cfg(not(target_arch = "wasm32"))]
         let builder = builder.user_agent(concat!("space3d/", env!("CARGO_PKG_VERSION")));
         Self {

@@ -49,8 +49,10 @@ struct Job {
 // DrawIndexedIndirectArgs (5 words per draw), then 4 words per workgroup record from
 // `params.wg_word`: visibility mask lo/hi, first output slot, unused.
 @group(0) @binding(4) var<storage, read_write> args: array<u32>;
-// Six frustum planes per view (a window of 64 views; one bind group per window).
-@group(0) @binding(5) var<uniform> frusta: array<vec4<f32>, 384>;
+// Seven vectors per view (a window of 64 views; one bind group per window): the six frustum
+// planes, then `Frustum::small`: a point (xyz) and a ratio (w); an instance whose radius is
+// under the ratio × its distance from the point is not drawn (0: no such test).
+@group(0) @binding(5) var<uniform> frusta: array<vec4<f32>, 448>;
 
 var<workgroup> wg_mask: array<atomic<u32>, 2>;
 var<workgroup> sums: array<u32, 64>;
@@ -157,10 +159,14 @@ fn is_visible(job: Job, base: u32) -> bool {
     }
     var visible = true;
     for (var i = 0u; i < 6u; i++) {
-        let p = frusta[job.view * 6u + i];
+        let p = frusta[job.view * 7u + i];
         if (dot(p.xyz, center) + p.w < -radius) {
             visible = false;
         }
+    }
+    let small = frusta[job.view * 7u + 6u];
+    if (radius < small.w * distance(center, small.xyz)) {
+        visible = false;
     }
     return visible;
 }

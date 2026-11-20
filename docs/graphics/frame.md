@@ -104,6 +104,16 @@ CameraFrame::default().with_hdr(HdrMode::Compact)
 | `Ldr` | the Ldr fallback everywhere (cheapest post path) |
 | `Compact` | `Rg11b10Ufloat` (half the bandwidth, no alpha) on an opaque-cleared, single-sample primary target where the device renders it; `Auto` elsewhere |
 
+What `Compact` costs in the picture, measured (2026-11, SpaceCorps on an AMD Radeon integrated
+GPU, Vulkan, Medium, the game's brightest blue sector, the same frame captured with `Compact` and
+with `Auto`): no banding. The compact frame is a little darker, evenly: 0.18, 0.23 and 1.07 codes
+(R, G, B) on average over the frame, growing with brightness (blue 0.7 codes at codes 32 to 64,
+1.1 at 64 to 128, 1.7 at 128 to 200), because each write to the 6-bit (5 in blue) mantissa is
+rounded down and the scene blends many layers. 9 × 9 box means of the two frames, with their
+contrast raised six times, show the same smooth nebula with no contours in either. So the scene
+writes are not dithered: there are no bands to hide. (A bloom halo wide enough to judge was not
+in that scene; the chain's own loss is in post.md, "Chain format, memory and platforms".)
+
 **The Ldr fallback** (devices without float render targets — WebGL2 without
 `EXT_color_buffer_float` — or `HdrMode::Ldr`): the scene texture is `Rgba8UnormSrgb`, and every
 fragment and clear color is exposed and tonemapped with the camera's operator before it is
@@ -350,6 +360,64 @@ cell that leaves at most `ratio` of the triangles. Not everything inside a cell 
   simpler than one vertex for each way it faces.
 * A stream (normals, UVs, colours, tangents, second UVs) counts only when it has a value for
   every position; one of another length is left out of the result.
+
+Clustering cannot make a **thin part** simpler: a fin a few cells wide falls apart into scattered
+triangles before it has lost many, and a model of many small parts (each a fin, a plate, a strut)
+either keeps nearly all its triangles or shows holes. For those there is edge collapse:
+
+```rust
+use space3d::render::lod::{EdgeCollapse, simplify_edges};
+// three tenths of the triangles, and no collapse whose mean error is over 1 % of the mesh's size
+let settings = EdgeCollapse::to_ratio(&data, 0.3).with_max_error(0.01);
+let (mid, mid_extras) = simplify_edges(&data, &extras, &settings);
+```
+
+`lod::simplify_edges(&data, &extras, &EdgeCollapse)` takes out one edge at a time, the one whose
+loss moves the surface least by the quadric error metric (the summed squared distance to the
+planes of the faces a vertex has stood for), one end moving onto the other, until
+`EdgeCollapse::triangles` are left or no allowed collapse is (`EdgeCollapse::to(count)`,
+`EdgeCollapse::to_ratio(&data, ratio)`; the result can be up to three triangles under the
+count, as a collapse takes two as a rule, one at a border, four on a two-sided sheet).
+`max_error` is a share of the mesh's largest side and infinite by default; it limits a mean
+(the root mean square distance to the planes the two places have gathered, taken at each
+step), not the distance the surface moves in the end, which was 1.6 to 6.2 times the limit on
+a sheet bent over an arc: leave that margin. Pure Rust, no dependency, the same result on every platform and every run
+(ties are broken by the vertices' order).
+
+* **No new vertices.** Every vertex of the result is a vertex of the mesh given, with its own
+  normal, UVs, colour, tangent and second UVs, in the old order: no attribute is blended or
+  made up, and a triangle is textured from one island as before.
+* **Seams and hard edges stay.** Vertices at one position with different attributes (the two
+  sides of a texture seam, of a hard edge, of a sheet whose back is a reversed copy) are one
+  place with several vertices. A place moves only where each of its vertices finds its own side
+  at the other end of the edge: along a seam and not off it, so both sides stay attached and no
+  triangle spans two islands; a corner where three sides meet stays. A flat-shaded mesh (a
+  vertex for every corner of every face) is joined by position, and a moved corner takes the
+  vertex there that has the same UVs and colour and faces nearest its own way (within 60
+  degrees; else the collapse is not made).
+* **Borders and knife edges keep the outline.** An edge with one face, and an edge whose faces
+  fold back on each other more sharply than 60 degrees (the rim of a thin fin, the border of a
+  two-sided sheet), weighs `EdgeCollapse::border_weight` (10) times a face against moving
+  sideways: it is made simpler along itself and not eaten into.
+* **No face turns over**, in space (its normal turns by less than about 78 degrees) or in the
+  texture; none becomes a line; none comes to lie on another, face to face or back to back (a
+  tetrahedron stays as it is); the surface is not pinched. A closed mesh stays closed; two
+  places of the outline (a border, or a knife edge where there is no border) join only along
+  it, so a ribbon is not cut through across a rung. The last triangle of a piece is never
+  taken.
+* A mesh that cannot reach the target under these rules comes back with what it could: check
+  `triangle_count()` and fall back to the mesh given, or to `simplify_to`, as fits.
+
+What it does not do: it places no vertex at a new, better position (the result is a subset of
+the vertices, so a smooth ball shrinks a little: under 6 % of its volume at three tenths of
+the triangles of a sphere of 24 rings, which a test holds it to), it does not weigh the texture's detail in the cost, and it joins
+nothing that does not share an edge (clustering does: for a mesh drawn at a few pixels, where
+separate pieces should fuse, `simplify_to` is still the tool). The cost grows a little faster
+than the triangles: on one core of a loaded PC, 20 to 50 ms for 5,000 triangles, 0.1 to 0.3 s
+for 20,000, 1 to 2.6 s for 100,000 (it was 3 to 24 s, and 27 s for a fan of 4,000 triangles
+round one vertex, now 14 ms). To try several counts, `simplify_edges_steps` gives the mesh at
+each of them from one run (the collapses come in one order whatever the count). Call it when
+a model is loaded, off the frame's thread.
 
 ## Several cameras
 
@@ -776,13 +844,17 @@ cost nothing while no subscriber takes trace spans.
 
 | name | part of `render::render_frame` |
 |---|---|
-| `render.prepare` | extraction and everything uploaded for the frame; its parts are `render.prepare.extract`, `.views`, `.nodes`, `.upload`, `.bind_groups` |
+| `render.prepare` | extraction and everything uploaded for the frame; its parts are `render.prepare.extract`, `.views`, `.nodes`, `.upload`, `.bind_groups`; the particles' share of the nodes is `render.prepare.nodes.particles` |
 | `render.compute` | encoding the GPU culling compute pass |
 | `render.depth_views` | encoding the depth views (shadow maps) |
 | `render.views` | encoding the camera views and the post groups |
 | `render.overlays` | encoding the AfterTonemap overlays (egui) |
-| `render.submit` | finishing the uploads, submitting and presenting |
+| `render.submit` | finishing the uploads, submitting and presenting; its parts are `render.submit.uploads` (the staging belt's buffers unmapped), `.encoder` (the frame's commands closed), `.queue` (handed to the driver) and `.present` |
 | `render.pace` | keeping at most three frames in flight; with the GPU behind, this is where the frame waits for it |
+
+The UI's two systems have parts too: `ui::begin_frame.pass` (egui's pass begun: it drops what the last pass laid out and this one
+has not asked for), `ui::end_frame.pass` (the pass ended) and `ui::end_frame.tessellate` (the frame's shapes made triangles, on the
+main thread).
 
 ## Capture and tools
 

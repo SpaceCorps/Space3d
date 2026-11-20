@@ -67,6 +67,10 @@ thread_local! {
     /// Scratch of [`propagate_transforms`], kept between calls so a steady-state frame with
     /// parented entities allocates nothing.
     static CHILDREN: std::cell::Cell<Vec<ChildEntry>> = const { std::cell::Cell::new(Vec::new()) };
+    /// The query behind [`propagate_transforms`]' view of every `GlobalTransform`, kept between calls for the same reason: it is
+    /// made again only when the world's set of archetypes changes.
+    static GLOBALS: std::cell::Cell<Option<hecs::PreparedQuery<&'static mut GlobalTransform>>> =
+        const { std::cell::Cell::new(None) };
 }
 
 /// Propagates `Transform` → `GlobalTransform` (supports one-level-deep and
@@ -112,9 +116,14 @@ pub fn propagate_transforms(world: &mut hecs::World) {
         );
     }
     let any_nested = children.iter().any(|c| c.3);
+    let mut prepared = GLOBALS.take().unwrap_or_default();
     for depth in 0..32 {
         let mut changed = false;
         {
+            // Every `GlobalTransform` of the world through one view: a child's and its parent's are found by the entity alone, without
+            // the archetype's column and its borrow being looked up again for each (with the 3,600 parts of a wave of 200 aliens that
+            // lookup was most of this system).
+            let mut globals = prepared.view_mut(world);
             let mut last: Option<(hecs::Entity, Option<Mat4>)> = None;
             for &(e, parent, local, nested) in &children {
                 if depth > 0 && !nested {
@@ -123,7 +132,7 @@ pub fn propagate_transforms(world: &mut hecs::World) {
                 let pg = match last {
                     Some((p, pg)) if p == parent => pg,
                     _ => {
-                        let pg = world.get::<&GlobalTransform>(parent).ok().map(|g| g.0);
+                        let pg = globals.get_mut(parent).map(|g| g.0);
                         last = Some((parent, pg));
                         pg
                     }
@@ -132,14 +141,14 @@ pub fn propagate_transforms(world: &mut hecs::World) {
                     continue;
                 };
                 let new = pg * local;
-                match world.get::<&mut GlobalTransform>(e) {
-                    Ok(mut g) => {
+                match globals.get_mut(e) {
+                    Some(g) => {
                         if g.0 != new {
                             g.0 = new;
                             changed = true;
                         }
                     }
-                    Err(_) => missing.push((e, GlobalTransform(new))),
+                    None => missing.push((e, GlobalTransform(new))),
                 }
             }
         }
@@ -152,4 +161,63 @@ pub fn propagate_transforms(world: &mut hecs::World) {
         }
     }
     CHILDREN.set(children);
+    GLOBALS.set(Some(prepared));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The parts of a model follow its root, a part of a part follows both, a child whose parent is gone stays where it was, and a
+    /// second world's hierarchy is settled as well as the first's (the view's query is kept between calls, and made again for a world
+    /// whose archetypes are others).
+    #[test]
+    fn children_follow_their_parents_in_every_world() {
+        let mut world = hecs::World::new();
+        let root =
+            world
+                .spawn((Transform::from_xyz(10.0, 0.0, 0.0)
+                    .with_rotation(Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)),));
+        let part = world.spawn((Transform::from_xyz(0.0, 0.0, -2.0), Parent(root)));
+        let tip = world.spawn((Transform::from_xyz(0.0, 1.0, 0.0), Parent(part), Name("tip".into())));
+        let orphan_parent = world.spawn((Transform::from_xyz(0.0, 5.0, 0.0),));
+        let orphan = world.spawn((Transform::from_xyz(1.0, 0.0, 0.0), Parent(orphan_parent)));
+        let at = |world: &hecs::World, e| world.get::<&GlobalTransform>(e).unwrap().0.w_axis.truncate();
+        propagate_transforms(&mut world);
+        // (a quarter turn about Y takes -Z to -X)
+        assert!(
+            at(&world, part).distance(Vec3::new(8.0, 0.0, 0.0)) < 1e-5,
+            "{}",
+            at(&world, part)
+        );
+        assert!(
+            at(&world, tip).distance(Vec3::new(8.0, 1.0, 0.0)) < 1e-5,
+            "{}",
+            at(&world, tip)
+        );
+        assert!(at(&world, orphan).distance(Vec3::new(1.0, 5.0, 0.0)) < 1e-5);
+        // The root moves: both follow in one call; the orphan's parent is despawned: it keeps its last place
+        world.get::<&mut Transform>(root).unwrap().translation.y = 3.0;
+        world.despawn(orphan_parent).unwrap();
+        propagate_transforms(&mut world);
+        assert!(
+            at(&world, tip).distance(Vec3::new(8.0, 4.0, 0.0)) < 1e-5,
+            "{}",
+            at(&world, tip)
+        );
+        assert!(at(&world, orphan).distance(Vec3::new(1.0, 5.0, 0.0)) < 1e-5);
+        // Another world, with other archetypes, between two calls for the first
+        let mut other = hecs::World::new();
+        let a = other.spawn((Name("a".into()), Transform::from_xyz(1.0, 2.0, 3.0)));
+        let b = other.spawn((Transform::from_xyz(1.0, 0.0, 0.0), Parent(a), Name("b".into())));
+        propagate_transforms(&mut other);
+        assert!(at(&other, b).distance(Vec3::new(2.0, 2.0, 3.0)) < 1e-5);
+        world.get::<&mut Transform>(part).unwrap().translation.z = -4.0;
+        propagate_transforms(&mut world);
+        assert!(
+            at(&world, tip).distance(Vec3::new(6.0, 4.0, 0.0)) < 1e-5,
+            "{}",
+            at(&world, tip)
+        );
+    }
 }

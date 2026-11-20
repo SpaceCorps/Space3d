@@ -94,6 +94,11 @@ enum GamepadButtonDef {
     DPadDown,
     DPadLeft,
     DPadRight,
+    LeftTrigger,
+    RightTrigger,
+    LeftThumb,
+    RightThumb,
+    Mode,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -115,7 +120,7 @@ const MOUSE_BUTTONS: [MouseButton; 5] = [
     MouseButton::Forward,
 ];
 
-const GAMEPAD_BUTTONS: [GamepadButton; 12] = [
+const GAMEPAD_BUTTONS: [GamepadButton; 17] = [
     GamepadButton::South,
     GamepadButton::East,
     GamepadButton::North,
@@ -128,6 +133,11 @@ const GAMEPAD_BUTTONS: [GamepadButton; 12] = [
     GamepadButton::DPadDown,
     GamepadButton::DPadLeft,
     GamepadButton::DPadRight,
+    GamepadButton::LeftTrigger,
+    GamepadButton::RightTrigger,
+    GamepadButton::LeftThumb,
+    GamepadButton::RightThumb,
+    GamepadButton::Mode,
 ];
 
 const GAMEPAD_AXES: [GamepadAxis; 6] = [

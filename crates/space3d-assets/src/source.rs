@@ -229,9 +229,77 @@ impl std::fmt::Debug for MemorySource {
     }
 }
 
-/// The platform's default source for `root`: [`FileSource`] on native, [`HttpSource`] on web.
+/// The assets packed into the APK (its `assets/` folder), read through the activity's
+/// `AAssetManager`: they are entries of a zip, not files, so [`FileSource`] cannot see them.
+/// Paths are relative to the APK's `assets/`. The manager comes from
+/// [`set_android_asset_manager`], which `space3d::main!` calls before the app is built.
+#[cfg(target_os = "android")]
+#[derive(Clone, Copy, Debug, Default)]
+pub struct AndroidAssetSource;
+
+#[cfg(target_os = "android")]
+static ANDROID_ASSETS: std::sync::OnceLock<ndk::asset::AssetManager> = std::sync::OnceLock::new();
+
+/// Android: hand the activity's asset manager (`AndroidApp::asset_manager()`) to
+/// [`AndroidAssetSource`]. The first call wins.
+#[cfg(target_os = "android")]
+pub fn set_android_asset_manager(manager: ndk::asset::AssetManager) {
+    let _ = ANDROID_ASSETS.set(manager);
+}
+
+#[cfg(target_os = "android")]
+impl AndroidAssetSource {
+    /// Read one whole asset now (blocking; the async [`AssetSource::read`] runs this on the
+    /// tasks runtime).
+    pub fn read_now(path: &str) -> Result<Vec<u8>, AssetError> {
+        let Some(manager) = ANDROID_ASSETS.get() else {
+            return Err(AssetError::Unsupported(
+                "Android: no asset manager (start the app through space3d::main!)".into(),
+            ));
+        };
+        let name = std::ffi::CString::new(path).map_err(|_| AssetError::InvalidPath(path.to_string()))?;
+        let mut asset = manager
+            .open(&name)
+            .ok_or_else(|| AssetError::NotFound(path.to_string()))?;
+        let mut bytes = Vec::with_capacity(asset.length());
+        std::io::Read::read_to_end(&mut asset, &mut bytes).map_err(|e| AssetError::io(path.to_string(), e))?;
+        Ok(bytes)
+    }
+}
+
+#[cfg(target_os = "android")]
+impl AssetSource for AndroidAssetSource {
+    fn read(&self, path: &AssetPath) -> BoxedFuture<Result<Vec<u8>, AssetError>> {
+        if path.escapes_root() || path.path().is_empty() {
+            return ready(Err(AssetError::InvalidPath(path.to_string())));
+        }
+        let name = path.path().to_string();
+        Box::pin(async move { Self::read_now(&name) })
+    }
+}
+
+/// The platform's default source for `root`: [`FileSource`] on desktop, [`HttpSource`] on web,
+/// [`AndroidAssetSource`] on Android (the APK's `assets/`; `root` is not used there). On iOS a
+/// relative `root` is taken from the app bundle (the folder of the executable), since the
+/// process starts in `/`.
 pub fn default_source(root: &str) -> Arc<dyn AssetSource> {
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(target_os = "android")]
+    {
+        let _ = root;
+        Arc::new(AndroidAssetSource)
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let root = std::path::Path::new(root);
+        let bundle = std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(|p| p.to_path_buf()));
+        match bundle {
+            Some(bundle) if root.is_relative() => Arc::new(FileSource::new(bundle.join(root))),
+            _ => Arc::new(FileSource::new(root)),
+        }
+    }
+    #[cfg(not(any(target_arch = "wasm32", target_os = "android", target_os = "ios")))]
     {
         Arc::new(FileSource::new(root))
     }

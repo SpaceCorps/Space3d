@@ -298,6 +298,15 @@ unchanged `DirectionalLight`). With several, the lowest entity casts and a warni
     whole texels, so panning never makes shadow edges shimmer. It extends `caster_depth` (500)
     toward the light, so casters outside the view (above the camera, off screen toward the sun)
     still cast.
+  * `min_caster_pixels` (default 0: everything casts) leaves an instance out of the map when
+    its bounding sphere is under that many pixels in radius on the screen of the camera the
+    map follows (`ShadowFit::Camera`'s, else the first primary scene view; perspective cameras
+    only). The depth view's frustum carries that camera's eye and a radius ÷ distance ratio
+    (`Frustum::small`), tested with the frustum planes on the CPU and in the GPU culling. It is
+    per instance: a model made of parts loses its small parts' shadows first. No hysteresis: an
+    instance crossing the size gains or loses its shadow at once. A cut for cheap tiers: on an
+    AMD Radeon iGPU a wave of 200 ships of 18 parts went from 0.78 ms of shadow pass to 0.22 ms
+    at 10 px.
   * Receivers outside the map are lit; shadows fade out over its outer 10 %.
 * **Filter** (`ShadowFilter`, a pipeline constant, so it costs only what it uses): `Hard` (one
   bilinear comparison, 2×2 texels), `Pcf4` (3×3), `Pcf9` (default, 5×5), `Pcf16` (7×7), smooth

@@ -29,6 +29,11 @@ tracing-wasm.workspace = true
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { workspace = true, features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
+# Gamepads (src/gamepad.rs). Desktop only: gilrs has no Android or iOS backend (Android pads
+# come through winit's key events, runner.rs), and the web one is not wired yet.
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+gilrs.workspace = true
+
 [dev-dependencies]
 image.workspace = true
 space3d-tasks.workspace = true
@@ -39,5 +44,16 @@ space3d-tasks.workspace = true
 name = "os_layout"
 harness = false
 
+# A virtual Xbox 360 pad through ViGEmBus (examples/virtual_pad.rs): the real backend's proof on
+# a Windows PC without a pad. Never part of a shipped build. MIT.
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+vigem-client = "0.1.4"
+
+# The scene delegate (src/ios.rs); the objc2 winit 0.30 itself uses.
+[target.'cfg(target_os = "ios")'.dependencies]
+objc2 = "0.5.2"
+
 [target.'cfg(target_os = "android")'.dependencies]
 winit = { workspace = true, features = ["android-native-activity"] }
+# Questions to the activity (src/android.rs); the jni android-activity itself uses.
+jni = "0.22.4"

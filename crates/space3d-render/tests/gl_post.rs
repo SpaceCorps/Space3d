@@ -124,6 +124,11 @@ fn gl_fxaa_softens_edges() {
 }
 
 #[test]
+fn gl_fxaa_intermediate_is_dithered() {
+    cases::fxaa_intermediate_is_dithered(gl_app);
+}
+
+#[test]
 fn gl_film_grain_is_seeded() {
     cases::film_grain_is_seeded(gl_app);
 }
@@ -229,6 +234,11 @@ fn gl_auto_exposure_history_and_steady_state() {
 #[test]
 fn gl_grading_matches_formulas() {
     cases::grading_matches_formulas(gl_app);
+}
+
+#[test]
+fn gl_display_gamma_matches_formula() {
+    cases::display_gamma_matches_formula(gl_app);
 }
 
 #[test]

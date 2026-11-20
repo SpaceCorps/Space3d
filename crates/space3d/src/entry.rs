@@ -43,6 +43,9 @@ pub fn run_web(build: impl FnOnce(&mut App)) {
 /// run the app. See `space3d_platform::mobile`.
 #[cfg(all(target_os = "android", feature = "platform"))]
 pub fn run_android(android_app: space3d_platform::AndroidApp, build: impl FnOnce(&mut App)) {
+    // The APK's assets are read through the activity's asset manager (`AndroidAssetSource`).
+    #[cfg(feature = "assets")]
+    space3d_assets::set_android_asset_manager(android_app.asset_manager());
     space3d_platform::android_main_entry(android_app, build);
 }
 

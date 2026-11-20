@@ -20,7 +20,7 @@ jobs:
       - name: System deps
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libdbus-1-dev pkg-config
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo clippy --workspace --exclude hello_cube_mobile --all-targets -- -D warnings
       # Kinsoku (Chinese and Japanese line breaking): third_party/epaint must be exactly the
       # published epaint + third_party/epaint.kinsoku.patch, have egui's version and be what
       # cargo resolves; after an egui bump run `python3 scripts/update-epaint.py`.
@@ -47,7 +47,7 @@ jobs:
       # Hosted runners have no real GPU (lavapipe, WARP, paravirtual Metal): GPU tests render
       # differently there or crash the driver, so they take their documented skip path
       # (SPACE3D_NO_GPU, see space3d-render). Everything else runs. GPU tests run in gpu-tests.yml (nightly).
-      - run: cargo test --workspace --no-fail-fast
+      - run: cargo test --workspace --exclude hello_cube_mobile --no-fail-fast
         env:
           SPACE3D_NO_GPU: "1"
           # Shared runners are slower than the dev machine the timing gates are calibrated on.

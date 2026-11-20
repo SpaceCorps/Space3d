@@ -23,16 +23,18 @@
 //!   that follows a Latin word or a mark ("Skylab" | "「", "！" | "（").
 //! * [`Break::Upstream`]: egui's own rules decide. This is the answer for every pair of
 //!   characters without a Chinese or Japanese character in it (apart from the ellipses and
-//!   dashes below and the two Unicode rules after this list), so Latin, Cyrillic, Greek,
+//!   dashes below and the three Unicode rules after this list), so Latin, Cyrillic, Greek,
 //!   Korean… text lays out as upstream, and “ ‘ « — which open a quote in Chinese and English
 //!   but close one in German („Tor“) — only count as opening brackets next to Chinese or
 //!   Japanese characters.
 //!
-//! Two rules of Unicode line breaking (UAX #14) hold in every script, because egui lacks them
+//! Three rules of Unicode line breaking (UAX #14) hold in every script, because egui lacks them
 //! and they show in ordinary Latin text (a chat line's "\[T\] name:" wrapped as "\[T\]" | " name"
-//! and "[" | "T] name"): no break just before a no-break space U+00A0 (class GL, LB12a) unless
-//! a space comes before it, and no break after an ASCII opening bracket `(` `[` `{` (class OP,
-//! LB14), also across the spaces after it ("[ x"). See [`line_break`].
+//! and "[" | "T] name", a clan tag glued with word joiners as "\[A-" | "B\]"): no break just
+//! before a no-break space U+00A0 (class GL, LB12a) unless a space comes before it, no break
+//! after an ASCII opening bracket `(` `[` `{` (class OP, LB14), also across the spaces after it
+//! ("[ x"), and no break next to a word joiner U+2060 or U+FEFF (class WJ, LB11) unless a space
+//! is on the other side. See [`line_break`].
 //!
 //! Row breaking uses [`line_break`] through a paragraph-level scan (crate-private), which also
 //! looks past spaces: a space between a bracket and its text ("「　重要　」") doesn't let the
@@ -50,7 +52,7 @@ use crate::text::Glyph;
 
 /// Revision of these rules, bumped whenever they change. Its presence tells a program or a
 /// test that epaint is Space3d's patched copy (`egui::epaint::text::kinsoku::VERSION`).
-pub const VERSION: u32 = 4;
+pub const VERSION: u32 = 5;
 
 /// Kinsoku's ruling on a line break between two characters, see [`line_break`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,7 +77,10 @@ pub enum Break {
 ///   upstream broke after it as after any ASCII mark, "[" | "T] name");
 /// * no line starts with a no-break space U+00A0 (class GL, LB12a) unless a space comes
 ///   before it (upstream broke before it after a mark or a letter, "\[T\]" | "\u{a0}name"). Only
-///   the break before it is ruled on: after it egui decides as before.
+///   the break before it is ruled on: after it egui decides as before;
+/// * no line breaks next to a word joiner U+2060 or U+FEFF (class WJ, LB11) unless a space is
+///   on the other side (upstream broke after a dash or a mark, a clan tag glued with joiners as
+///   "\[A-" | "B\]").
 ///
 /// A space decides for itself — a line breaks after it as egui does — except that no line ends
 /// with an opening bracket before it and next to Chinese or Japanese no line starts with a
@@ -209,13 +214,17 @@ pub fn is_inseparable(before: char, after: char) -> bool {
         || (matches!(before, '〳' | '〴') && after == '〵')
 }
 
-/// The two rules of Unicode line breaking (UAX #14) that [`line_break`] applies in every
-/// script: no break after an ASCII opening bracket (LB14), and none before a no-break space
-/// (LB12a) that doesn't follow a space. A hyphen or another break-after character before it
-/// doesn't lift the rule, as it does in UAX #14: no row should start with the blank.
+/// The three rules of Unicode line breaking (UAX #14) that [`line_break`] applies in every
+/// script: no break after an ASCII opening bracket (LB14), none before a no-break space
+/// (LB12a) that doesn't follow a space, and none on either side of a word joiner (LB11). A
+/// hyphen or another break-after character before a no-break space doesn't lift the rule, as
+/// it does in UAX #14: no row should start with the blank. Next to a space a word joiner
+/// leaves the break to egui (the space breaks after itself), as the no-break space does.
 fn is_unicode_glue(before: char, after: char) -> bool {
+    let space = |c: char| c.is_whitespace() && c != NO_BREAK_SPACE;
     is_ascii_opening_bracket(before)
         || (after == NO_BREAK_SPACE && (!before.is_whitespace() || before == NO_BREAK_SPACE))
+        || ((is_word_joiner(before) || is_word_joiner(after)) && !space(before) && !space(after))
 }
 
 /// The ASCII opening brackets `(` `[` `{` (Unicode line breaking class OP), which stay with
@@ -226,6 +235,13 @@ fn is_ascii_opening_bracket(c: char) -> bool {
 
 /// Class GL: glues the characters on both sides (which egui doesn't treat as a space).
 const NO_BREAK_SPACE: char = '\u{A0}';
+
+/// Class WJ, the word joiner U+2060 and the zero-width no-break space U+FEFF: no line breaks on
+/// either side of them. [`is_glue`] also counts the zero-width joiner, which only matters next
+/// to Chinese and Japanese text.
+fn is_word_joiner(c: char) -> bool {
+    matches!(c, '\u{2060}' | '\u{FEFF}')
+}
 
 /// `"` and `'` open and close quotes (Unicode line breaking class QU): next to Chinese or
 /// Japanese no line breaks on either side of them.
@@ -728,8 +744,9 @@ mod tests {
     /// No Chinese or Japanese character in the pair: egui's own rules, so text without them
     /// lays out as upstream (`RowBreakCandidates` records every other break as egui does). The
     /// only exceptions are the rules of Unicode line breaking that egui lacks, in every script:
-    /// an ellipsis after a non-space, "——" "……", an ASCII opening bracket before anything, and
-    /// a no-break space after anything but a space.
+    /// an ellipsis after a non-space, "——" "……", an ASCII opening bracket before anything, a
+    /// no-break space after anything but a space, and a word joiner next to anything but a
+    /// space.
     #[test]
     fn text_without_cjk_is_left_to_egui() {
         let mut sample: Vec<char> = (' '..='~').collect();
@@ -742,6 +759,7 @@ mod tests {
         sample.extend('\u{2100}'..='\u{214F}'); // Letterlike Symbols (℃)
         sample.extend('\u{AC00}'..='\u{AC80}'); // Hangul syllables
         sample.extend('\u{1F600}'..='\u{1F64F}'); // Emoji
+        sample.push('\u{FEFF}'); // the zero-width no-break space is a word joiner too
         let mut checked = 0_usize;
         for &a in &sample {
             assert!(!is_cjk(a), "{a:?}");
@@ -749,10 +767,16 @@ mod tests {
                 let ellipsis = matches!(b, '…' | '‥' | '⋯');
                 let opening_bracket = matches!(a, '(' | '[' | '{');
                 let before_nbsp = b == '\u{A0}' && !(a.is_whitespace() && a != '\u{A0}');
+                let space = |c: char| c.is_whitespace() && c != '\u{A0}';
+                let word_joiner = (matches!(a, '\u{2060}' | '\u{FEFF}')
+                    || matches!(b, '\u{2060}' | '\u{FEFF}'))
+                    && !space(a)
+                    && !space(b);
                 let expected = if is_inseparable(a, b)
                     || (ellipsis && !a.is_whitespace() && !b.is_whitespace())
                     || opening_bracket
                     || before_nbsp
+                    || word_joiner
                 {
                     Break::Prohibited
                 } else {
@@ -847,6 +871,38 @@ mod tests {
             Break::Upstream,
             &[")a", "]G", "}1", " (", " [", " {", "\u{a0}(", "\u{a0}["],
         );
+    }
+
+    /// No break on either side of a word joiner (UAX #14 class WJ), after any character before
+    /// it and before any after it: a joiner glued to a clan tag's marks keeps "[A-" and "B]"
+    /// together. Next to a space egui decides, as for the no-break space.
+    #[test]
+    fn no_break_next_to_a_word_joiner() {
+        for joiner in ['\u{2060}', '\u{FEFF}'] {
+            let pairs: Vec<String> = [
+                "a", "G", "1", ".", "-", "_", "/", "]", ")", "!", "П", "한", "字", "。", "」",
+                "（", "“", "…", "\u{a0}", "\u{2060}", "\u{FEFF}",
+            ]
+            .iter()
+            .flat_map(|other| [format!("{other}{joiner}"), format!("{joiner}{other}")])
+            .collect();
+            expect(
+                Break::Prohibited,
+                &pairs.iter().map(String::as_str).collect::<Vec<_>>(),
+            );
+            // Next to a space the break stays egui's (a no-break space is not one here).
+            let spaced: Vec<String> = [" ", "\t", "\u{2003}"]
+                .iter()
+                .flat_map(|space| [format!("{space}{joiner}"), format!("{joiner}{space}")])
+                .collect();
+            expect(
+                Break::Upstream,
+                &spaced.iter().map(String::as_str).collect::<Vec<_>>(),
+            );
+        }
+        // A zero-width joiner is not a word joiner: it glues only next to Chinese or Japanese.
+        expect(Break::Upstream, &["a\u{200D}", "\u{200D}a", "-\u{200D}"]);
+        expect(Break::Prohibited, &["字\u{200D}", "\u{200D}字"]);
     }
 
     /// German quotes and the other typographic quotes are not touched: „Tor“, ‚Mehr‘, »Flotte«
@@ -1017,6 +1073,52 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A clan tag whose marks are glued to the next character with word joiners (the SpaceCorps
+    /// chat does: "[A-\u{2060}B]") is never split, at any width that holds it: upstream broke
+    /// after the dash or the mark, "[A-" | "B]". The company tag and the name stay glued with
+    /// no-break spaces as before: "[T]\u{a0}[A-B]\u{a0}name:".
+    #[test]
+    fn a_clan_tag_glued_with_word_joiners_is_never_split() {
+        let mut fonts = fonts();
+        let mut layouts = 0;
+        for clan in ["A-B", "A.B", "-_-", "!?", "A/B", "A:B", "A-B-C"] {
+            // A word joiner after each ASCII mark but an opening bracket, as the chat puts them.
+            let mut tag = String::from("[");
+            for c in clan.chars() {
+                tag.push(c);
+                if c.is_ascii_punctuation() {
+                    tag.push('\u{2060}');
+                }
+            }
+            tag.push(']');
+            // Narrower than both tags, their no-break spaces and one letter of the name, a row
+            // can't hold the run the rules keep together and breaks where it is full, which can
+            // be inside the clan tag ("[A-B" | "]\u{a0}nova:" when the space doesn't fit).
+            let tag_width =
+                width(&mut fonts, &format!("[T]\u{a0}{tag}\u{a0}W")).ceil() as usize + 1;
+            for name in ["nova", "Commander_Starfighter_Alpha27", &"W".repeat(32)] {
+                let text = format!("19:42  [T]\u{a0}{tag}\u{a0}{name}: anyone for the gate run?");
+                let start = text[..text.find(&tag).expect("the tag is in the text")]
+                    .chars()
+                    .count();
+                let end = start + tag.chars().count();
+                for max_width in tag_width..=600 {
+                    let rows = rows(&mut fonts, &text, max_width as f32);
+                    layouts += 1;
+                    let mut offset = 0;
+                    for row in &rows[..rows.len() - 1] {
+                        offset += row.chars().count();
+                        assert!(
+                            offset <= start || offset >= end,
+                            "{max_width}: the tag {tag:?} is split: {rows:?}"
+                        );
+                    }
+                }
+            }
+        }
+        assert!(layouts > 3000, "{layouts}");
     }
 
     /// A plain space between tag and name may still break (a space is egui's): the tag's own

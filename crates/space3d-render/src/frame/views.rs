@@ -628,11 +628,15 @@ impl FrameState {
         // This view's frustum, read by its culling jobs. The jobs of all views are grouped
         // into dispatches once every view is recorded (`prepare_dispatches`).
         if f.jobs.len() > jobs_start {
-            let planes: GpuFrustum = if culling {
-                frustum.planes.map(|p| p.to_array())
-            } else {
-                [[0.0, 0.0, 0.0, 1.0]; 6]
-            };
+            // Without culling: planes everything is inside of, and no size test.
+            let mut planes: GpuFrustum = [[0.0, 0.0, 0.0, 1.0]; 7];
+            planes[6] = [0.0; 4];
+            if culling {
+                for (to, plane) in planes.iter_mut().zip(frustum.planes) {
+                    *to = plane.to_array();
+                }
+                planes[6] = frustum.small.to_array();
+            }
             let slot = f.cull_planes.len() as u32;
             f.cull_planes.push(planes);
             for (_, job) in &mut f.jobs[jobs_start..] {

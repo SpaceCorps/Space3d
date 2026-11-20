@@ -202,7 +202,7 @@ pub(crate) fn passes(
         src_rect: [rect[0] as f32, rect[1] as f32, rect[2] as f32, rect[3] as f32],
         src_texel: [sx, sy, step(rect[3] as f32, prefiltered.1), exposure],
         threshold: threshold_constants(bloom.threshold, bloom.soft_knee),
-        flags: [u32::from(auto_exposure), 0, 0, 0],
+        flags: [u32::from(auto_exposure), 0, 0, u32::from(bloom.fast)],
     });
     if let Some((w, h)) = chain.half {
         // Each level-0 pixel's box in half-resolution pixels.
@@ -1446,6 +1446,39 @@ mod tests {
         let limited = limit(Vec3::splat(499.0)).x as f64;
         assert!((spike / limited - 1.0).abs() < 0.02, "{spike} vs {limited}");
         assert!(limited < 64.0);
+    }
+
+    /// `Bloom::fast` (the low tiers' prefilter: 4 bilinear taps, one threshold on their mean): a
+    /// large source keeps its glow (its inside is the same; only its rim, averaged with the
+    /// dark around it, loses), a small one glows less but never more, and the pass uniforms
+    /// carry the switch.
+    #[test]
+    fn the_fast_prefilter_keeps_large_sources_and_dims_small_ones() {
+        let fast = Bloom::glow().with_fast(true);
+        let chain = chain_size((1920, 1080), &fast);
+        let mut all = Vec::new();
+        passes((1920, 1080), [0, 0, 1920, 1080], &chain, &fast, (1.0, false), |p| {
+            all.push(p)
+        });
+        assert_eq!(all[0].flags, [0, 0, 0, 1]);
+        assert!(all[1..].iter().all(|p| p.flags[3] == 0));
+        let Ok(r) = pollster::block_on(crate::Renderer::new_headless(8, 8)) else {
+            eprintln!("skipping GPU test: no adapter available");
+            return;
+        };
+        let size = (1920, 1080);
+        let added = |px: u32, radiance: f32| {
+            let lit: Vec<(u32, u32)> = (0..px)
+                .flat_map(|dy| (0..px).map(move |dx| (960 + dx, 540 + dy)))
+                .collect();
+            let (level, texels) = level0_of(&r, size, &lit, radiance, &fast).expect("chain");
+            added_light(size, level, &texels) / ((px * px) as f64 * (radiance as f64 - 1.0))
+        };
+        let (large, medium, small) = (added(32, 4.0), added(8, 4.0), added(2, 10.0));
+        eprintln!("fast prefilter, glow kept: 32 px {large:.3}, 8 px {medium:.3}, 2 px {small:.3}");
+        assert!((0.9..=1.02).contains(&large), "{large}");
+        assert!((0.6..=1.02).contains(&medium), "{medium}");
+        assert!((0.2..=1.02).contains(&small), "{small}");
     }
 
     /// CPU mirror of `bloom_limit` in bloom.wgsl.

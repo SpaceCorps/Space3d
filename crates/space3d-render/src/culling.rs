@@ -109,6 +109,12 @@ pub(crate) fn stretch_bound(c0: Vec3, c1: Vec3, c2: Vec3) -> f32 {
 pub struct Frustum {
     /// Left, right, bottom, top, near, far.
     pub planes: [Vec4; 6],
+    /// Spheres too small to matter to this view: `xyz` is a point (a camera's eye) and `w` a
+    /// ratio, and a sphere whose radius is under `w` × its center's distance from the point
+    /// counts as outside ([`Self::intersects_sphere`], the GPU culling). `w` 0 (what
+    /// [`Self::from_view_proj`] gives): no such test. Shadow views set it from
+    /// `DirectionalShadow::min_caster_pixels`.
+    pub small: Vec4,
 }
 
 impl Frustum {
@@ -125,14 +131,18 @@ impl Frustum {
                 *p /= len;
             }
         }
-        Self { planes }
+        Self {
+            planes,
+            small: Vec4::ZERO,
+        }
     }
 
-    /// Sphere intersects or is inside the frustum.
+    /// Sphere intersects or is inside the frustum, and is not too small ([`Self::small`]).
     #[inline]
     pub fn intersects_sphere(&self, s: &Sphere) -> bool {
         let c = s.center.extend(1.0);
         self.planes.iter().all(|p| p.dot(c) >= -s.radius)
+            && (self.small.w <= 0.0 || s.radius >= self.small.w * s.center.distance(self.small.truncate()))
     }
 
     /// AABB intersects or is inside the frustum (conservative "p-vertex" test).
@@ -185,6 +195,18 @@ mod tests {
             center: Vec3::new(-3.4, 0.0, 0.0),
             radius: 1.0
         }));
+        // Too small from a point: radius under 0.1 × the distance from (0, 0, 5).
+        let small = Frustum {
+            small: Vec3::new(0.0, 0.0, 5.0).extend(0.1),
+            ..f
+        };
+        let at = |z: f32, radius: f32| Sphere {
+            center: Vec3::new(0.0, 0.0, z),
+            radius,
+        };
+        assert!(small.intersects_sphere(&at(0.0, 0.6)) && !small.intersects_sphere(&at(0.0, 0.4)));
+        assert!(small.intersects_sphere(&at(-5.0, 1.1)) && !small.intersects_sphere(&at(-5.0, 0.9)));
+        assert!(f.intersects_sphere(&at(-5.0, 0.01)), "no test without a ratio");
     }
 
     #[test]

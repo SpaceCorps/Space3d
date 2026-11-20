@@ -4,7 +4,7 @@
 //! * [`PlatformPlugin`] / [`WindowPlugin`] — open a window, create the renderer surface and
 //!   run the frame loop (`App::run()`), handling resize, DPI, focus and mobile
 //!   suspend/resume (surface recreation).
-//! * [`Input`] — keyboard, mouse, multi-touch and (stub) gamepads, fully injectable for tests
+//! * [`Input`] — keyboard, mouse, multi-touch and gamepads ([`gamepad`]), fully injectable for tests
 //!   (`Input::inject_*`); [`ActionMap`] + [`ActionState`] map named actions to bindings.
 //!   Mouse buttons keep their order within a frame ([`Input::mouse_button_events`]); releases
 //!   that no release event reported — a focus loss, or (macOS, Windows) the OS showing a held
@@ -55,30 +55,41 @@
 //! assert_eq!(input.key_label(KeyCode::Space).as_deref(), Some("Space"));
 //! ```
 
+#[cfg(target_os = "android")]
+mod android;
 pub mod background;
+pub mod gamepad;
 mod input;
+#[cfg(target_os = "ios")]
+pub mod ios;
 pub mod layout;
 pub mod mobile;
 mod os_buttons;
 mod runner;
+pub mod touch_pointer;
 #[cfg(target_arch = "wasm32")]
 mod web;
 mod window;
 
 pub use background::{background_mode, set_background_mode};
 pub use input::{
-    ActionMap, ActionState, ActionValue, Binding, ButtonState, Gamepad, GamepadAxis, GamepadButton, Input, InputPlugin,
-    KeyCode, KeyEvent, MouseButton, MouseButtonCause, MouseButtonEvent, Touch, TouchPhase,
+    ActionMap, ActionState, ActionValue, Binding, ButtonState, Gamepad, GamepadAxis, GamepadButton, GamepadChange,
+    Input, InputPlugin, KeyCode, KeyEvent, MouseButton, MouseButtonCause, MouseButtonEvent, Touch, TouchGesture,
+    TouchPhase,
 };
 pub use layout::{
     KeyLabel, KeyLabelSource, KeyLocation, KeyboardLayout, LogicalKey, NamedKey, english_key_name,
     is_writing_system_key, us_qwerty_label, writing_system_keys,
 };
 #[cfg(target_os = "android")]
-pub use mobile::{AndroidApp, android_main_entry};
+pub use mobile::{AndroidApp, android_app, android_main_entry};
+pub use mobile::{immersive, set_immersive};
 #[cfg(target_arch = "wasm32")]
 pub use web::{find_canvas, init_web_logging};
-pub use window::{AppliedCursor, CursorIcon, PlatformEvent, WindowCursor, WindowIcon, WindowPlugin, WindowState};
+pub use window::{
+    AppliedCursor, CursorIcon, KeyboardInset, PlatformEvent, SafeArea, TextInput, WindowCursor, WindowIcon,
+    WindowPlugin, WindowState,
+};
 
 pub use winit;
 

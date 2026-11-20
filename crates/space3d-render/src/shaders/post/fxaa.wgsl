@@ -9,8 +9,8 @@
 //   const S3D_FXAA_SUBPIX: f32;             // sub-pixel aliasing removal
 //
 // It reads the post group's LDR intermediate L (binding 5: an sRGB texture, so FXAA sees linear
-// values; luma is sqrt(Rec. 601 luma) ≈ perceptual) and writes D, then applies the last-pass
-// finish (grain, dither, encoding). Every tap is clamped to the group's rect: split screens
+// values; luma is sqrt(Rec. 601 luma) ≈ perceptual; the composite dithered it) and writes D, then
+// applies the last-pass finish (grain, dither where it blended, encoding). Every tap is clamped to the group's rect: split screens
 // never bleed into each other. Explicit-LOD sampling only (WebGL2-safe).
 
 @group(1) @binding(5) var fxaa_tex: texture_2d<f32>;
@@ -22,6 +22,9 @@ fn fxaa_tap(p: vec2<f32>) -> vec4<f32> {
     let hi = max(lo, min(post.out_rect.xy + post.out_rect.zw, size) - 0.5);
     return textureSampleLevel(fxaa_tex, post_sampler, clamp(p, lo, hi) / size, 0.0);
 }
+
+// Whether `fxaa` returned the pixel of L unchanged (no edge there).
+var<private> fxaa_copied: bool = false;
 
 fn fxaa_luma(c: vec4<f32>) -> f32 {
     return sqrt(dot(c.rgb, vec3<f32>(0.299, 0.587, 0.114)));
@@ -50,6 +53,7 @@ fn fxaa(pos: vec2<f32>) -> vec4<f32> {
     let range_min = min(min_wn, min_esm);
     let range = range_max - range_min;
     if (range < max(S3D_FXAA_EDGE_MIN, range_max * S3D_FXAA_EDGE)) {
+        fxaa_copied = true;
         return rgby_m;
     }
     let luma_nw = fxaa_luma_at(pos + vec2<f32>(-1.0, -1.0));
@@ -184,7 +188,11 @@ fn fs_fxaa(in: FullscreenOut) -> @location(0) vec4<f32> {
             rgb = rgb / a;
         }
     }
-    rgb = post_finish(rgb, in.pos.xy);
+    // A pixel FXAA copied is an 8-bit value the composite dithered already: a second dither would
+    // only add noise (σ 0.5 → 0.7 LSB). Blended pixels are fractional again and get it; so does
+    // everything under grain or in a transparent group (premultiplied, so not on a code).
+    let dithered = fxaa_copied && !transparent && !post_has(S3D_POST_GRAIN);
+    rgb = post_finish_with(rgb, in.pos.xy, !dithered);
     if (transparent) {
         rgb = rgb * a;
     }

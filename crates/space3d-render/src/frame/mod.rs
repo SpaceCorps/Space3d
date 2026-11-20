@@ -740,11 +740,19 @@ impl Renderer {
         self.timer.end_frame(&mut encoder);
 
         let submit = part("render.submit");
+        let span = part("render.submit.uploads");
         self.uploader.finish();
-        let submission = self.queue.submit([encoder.finish()]);
+        drop(span);
+        let span = part("render.submit.encoder");
+        let commands = encoder.finish();
+        drop(span);
+        let span = part("render.submit.queue");
+        let submission = self.queue.submit([commands]);
         self.timer.submitted(&self.queue);
         self.uploader.recall();
+        drop(span);
         if let Some(t) = surface_tex {
+            let _span = part("render.submit.present");
             self.queue.present(t);
         }
         drop(submit);

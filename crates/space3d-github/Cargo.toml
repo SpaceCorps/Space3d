@@ -21,6 +21,9 @@ semver = { version = "1.0.28", features = ["serde"] }
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { workspace = true, features = ["fs"] }
 
+[target.'cfg(target_os = "android")'.dependencies]
+space3d-net.workspace = true
+
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { workspace = true, features = ["Window", "Storage"] }
 

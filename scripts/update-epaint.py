@@ -2,7 +2,7 @@
 """Maintain Space3d's patched copy of epaint (egui's text layout) in third_party/epaint.
 
 third_party/epaint is the crates.io epaint crate plus the kinsoku patch in
-third_party/epaint.kinsoku.patch (Chinese and Japanese line breaking and two rules of Unicode
+third_party/epaint.kinsoku.patch (Chinese and Japanese line breaking and three rules of Unicode
 line breaking for every script, see third_party/README.md). The root Cargo.toml applies it with
 `[patch.crates-io]`, which only takes effect while the copy has the version egui asks for: after
 an egui bump, cargo warns "patch `epaint` was not used" and silently builds crates.io's epaint,
@@ -46,8 +46,8 @@ OWN_FILES = {"LICENSE-MIT", "LICENSE-APACHE"}
 IGNORED = {"target", ".cargo-ok"}
 PATCH_HEADER = """\
 Space3d patch to epaint {version}: kinsoku (禁則処理) line breaking for Chinese and Japanese,
-and two rules of Unicode line breaking (UAX #14) for every script: no break before a no-break
-space, none after an ASCII opening bracket. See third_party/README.md. Applied to the published
+and three rules of Unicode line breaking (UAX #14) for every script: no break before a no-break
+space, none after an ASCII opening bracket, none next to a word joiner. See third_party/README.md. Applied to the published
 crate with `git apply -p1` from its root (scripts/update-epaint.py does it); regenerate with
 `scripts/update-epaint.py --refresh`.
 
@@ -62,7 +62,12 @@ def fail(message):
 def run(cmd, cwd=ROOT, check=True, capture=False):
     print("+ " + " ".join(str(c) for c in cmd), file=sys.stderr)
     result = subprocess.run(
-        [str(c) for c in cmd], cwd=cwd, text=True, capture_output=capture, check=False
+        [str(c) for c in cmd],
+        cwd=cwd,
+        text=True,
+        encoding="utf-8",  # git's output (the patch has Chinese and Japanese text) on Windows too
+        capture_output=capture,
+        check=False,
     )
     if check and result.returncode != 0:
         if capture:
@@ -182,7 +187,8 @@ def differing_files(a, b):
 
 
 def write_patch(version, diff):
-    PATCH.write_text(PATCH_HEADER.format(version=version) + diff, encoding="utf-8")
+    # LF on Windows too: a patch with CRLF line ends does not apply to the published crate.
+    PATCH.write_text(PATCH_HEADER.format(version=version) + diff, encoding="utf-8", newline="\n")
     print(f"wrote {PATCH.relative_to(ROOT)}", file=sys.stderr)
 
 
@@ -285,7 +291,7 @@ def update(version, test):
             f"Vendored version: **epaint {version}** (egui commit `{sha}`, `crates/epaint`).",
             text, count=1, flags=re.M,
         )
-        README.write_text(text, encoding="utf-8")
+        README.write_text(text, encoding="utf-8", newline="\n")
     print(f"third_party/epaint: epaint {old} -> {version}", file=sys.stderr)
     if egui_version() != version:
         print(

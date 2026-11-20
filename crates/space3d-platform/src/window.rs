@@ -29,6 +29,12 @@ pub struct WindowPlugin {
     pub canvas_id: Option<String>,
     /// Exit when the window is closed (otherwise only [`PlatformEvent::CloseRequested`] is sent).
     pub exit_on_close: bool,
+    /// Phones: fingers are also the mouse, for a game whose controls and UI read the mouse
+    /// ([`crate::touch_pointer`]): a tap is a left click (pressed a frame after the pointer
+    /// arrives, so a UI knows whose click it is), a drag a left drag, a long press a right
+    /// click, a two-finger pinch the wheel; the pointer leaves when the finger lifts. The
+    /// fingers still arrive as touches. Default `false`.
+    pub touch_as_mouse: bool,
     /// Window icon (title bar, Alt-Tab) and, on Windows, the taskbar icon. `None` uses the
     /// platform default. Ignored on macOS (the Dock shows the app bundle's icon), the web and
     /// mobile.
@@ -115,6 +121,7 @@ impl Default for WindowPlugin {
             msaa_samples: 4,
             canvas_id: None,
             exit_on_close: true,
+            touch_as_mouse: false,
             icon: None,
         }
     }
@@ -145,6 +152,10 @@ impl Plugin for WindowPlugin {
             cursor_grab: false,
         });
         app.init_resource::<WindowCursor>();
+        app.init_resource::<SafeArea>();
+        if self.touch_as_mouse {
+            app.resources.init::<crate::touch_pointer::TouchMouse>().enabled = true;
+        }
         let settings = self.clone();
         app.set_runner(move |app| crate::runner::run(app, settings));
     }
@@ -170,6 +181,95 @@ pub struct WindowState {
     pub cursor_grab: bool,
 }
 
+/// The edges of the window the system keeps for itself, in physical pixels (resource): a
+/// phone's notch or camera island, rounded corners and the home bar. The picture covers them;
+/// what must stay readable and tappable keeps out of them (`space3d-ui` lays its UI out inside).
+/// Filled on iOS (the view's insets) and on Android (the activity's content rectangle: what the
+/// status bar, the navigation bar and a cutout leave; for an edge-to-edge window, which is told
+/// no rectangle of its own, [`Self::ANDROID_NAVIGATION_POINTS`] at the bottom); zero everywhere else.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SafeArea {
+    /// Kept at the left edge.
+    pub left: u32,
+    /// Kept at the top edge.
+    pub top: u32,
+    /// Kept at the right edge.
+    pub right: u32,
+    /// Kept at the bottom edge.
+    pub bottom: u32,
+}
+
+impl SafeArea {
+    /// Android, when the content rectangle is the whole window (an edge-to-edge app is not told
+    /// the bars): the height kept at the bottom for the navigation bar, in dp. 24 is the gesture
+    /// bar's; the three-button bar (48) and a cutout are not covered.
+    pub const ANDROID_NAVIGATION_POINTS: f64 = 24.0;
+
+    /// The insets of a content rectangle `(left, top, right, bottom)` in a window of `size`
+    /// pixels (Android's `onContentRectChanged`). A rectangle that is empty or not inside the
+    /// window (not told yet, or of the other orientation during a rotation) gives no insets.
+    pub fn from_content_rect(rect: (i32, i32, i32, i32), size: (u32, u32)) -> Self {
+        let (left, top, right, bottom) = rect;
+        let (w, h) = (size.0 as i32, size.1 as i32);
+        if left < 0 || top < 0 || right <= left || bottom <= top || right > w || bottom > h {
+            return Self::default();
+        }
+        Self {
+            left: left as u32,
+            top: top as u32,
+            right: (w - right) as u32,
+            bottom: (h - bottom) as u32,
+        }
+    }
+
+    /// Insets that are a portrait screen's (something at the top, nothing at either side) on a
+    /// landscape window of `size` pixels, turned: the top's at **both** sides (which side the
+    /// notch is on is not known), nothing at the top, two thirds of the bottom's (a home bar is
+    /// thinner along the long edge). Anything else is returned as it is.
+    ///
+    /// UIKit answers so in the iOS 27 Simulator for a landscape scene (`crate::ios`); on a
+    /// device that answers right this changes nothing.
+    pub fn turned_for_landscape(self, size: (u32, u32)) -> Self {
+        if size.0 > size.1 && self.top > 0 && self.left == 0 && self.right == 0 {
+            Self {
+                left: self.top,
+                right: self.top,
+                top: 0,
+                bottom: self.bottom * 2 / 3,
+            }
+        } else {
+            self
+        }
+    }
+}
+
+/// What the on-screen keyboard covers of the window, measured from its bottom edge, in pixels
+/// (resource; the runner keeps it on Android 11 and later, asking Java's `WindowInsets` while a
+/// text field wants text). 0: no keyboard is up, or the platform does not say (iOS, a desktop).
+/// A window that is not resized for the keyboard (a NativeActivity's is not) moves what is
+/// being typed in above this line itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct KeyboardInset {
+    /// Pixels of the window's bottom under the keyboard.
+    pub bottom: u32,
+}
+
+/// Whether a touch that went down at `down` and lifted at `up` (pixels) was a tap: it stayed
+/// within `slop` pixels. A finger that scrolled or dragged is none.
+#[cfg_attr(not(any(target_os = "android", target_os = "ios", test)), allow(dead_code))]
+pub(crate) fn lift_is_a_tap(down: glam::Vec2, up: glam::Vec2, slop: f32) -> bool {
+    down.distance(up) <= slop
+}
+
+/// Whether the game wants typed text now (resource). `space3d-ui` sets `wanted` while one of
+/// its text fields has the focus; on Android and iOS the runner shows the on-screen keyboard
+/// while it is set and hides it after. A game with text fields of its own writes it itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TextInput {
+    /// A text field has the focus.
+    pub wanted: bool,
+}
+
 /// Window/application lifecycle events (`Events<PlatformEvent>`).
 #[derive(Clone, Debug, PartialEq)]
 pub enum PlatformEvent {
@@ -185,4 +285,76 @@ pub enum PlatformEvent {
     Suspended,
     /// App returned to foreground — surface recreated.
     Resumed,
+}
+
+#[cfg(test)]
+mod safe_area_tests {
+    use super::SafeArea;
+
+    #[test]
+    fn a_content_rectangle_gives_the_insets() {
+        // A 2400 x 1080 landscape phone: a cutout of 136 px at the left, a gesture bar of 63 below.
+        let area = SafeArea::from_content_rect((136, 0, 2400, 1017), (2400, 1080));
+        assert_eq!(
+            area,
+            SafeArea {
+                left: 136,
+                top: 0,
+                right: 0,
+                bottom: 63
+            }
+        );
+        // Not told yet, or the portrait rectangle while the window is already landscape.
+        assert_eq!(
+            SafeArea::from_content_rect((0, 0, 0, 0), (2400, 1080)),
+            SafeArea::default()
+        );
+        assert_eq!(
+            SafeArea::from_content_rect((0, 136, 1080, 2337), (2400, 1080)),
+            SafeArea::default()
+        );
+    }
+
+    #[test]
+    fn portrait_insets_on_a_landscape_window_are_turned() {
+        let portrait = SafeArea {
+            left: 0,
+            top: 186,
+            right: 0,
+            bottom: 102,
+        };
+        assert_eq!(
+            portrait.turned_for_landscape((2622, 1206)),
+            SafeArea {
+                left: 186,
+                top: 0,
+                right: 186,
+                bottom: 68
+            }
+        );
+        // A portrait window keeps them, and so do insets that already name a side.
+        assert_eq!(portrait.turned_for_landscape((1206, 2622)), portrait);
+        let right = SafeArea {
+            left: 177,
+            top: 0,
+            right: 0,
+            bottom: 63,
+        };
+        assert_eq!(right.turned_for_landscape((2622, 1206)), right);
+    }
+}
+
+#[cfg(test)]
+mod keyboard_tests {
+    use super::*;
+
+    /// Only a finger that stayed where it went down brings the on-screen keyboard back.
+    #[test]
+    fn a_lift_within_the_slop_is_a_tap() {
+        let down = glam::Vec2::new(400.0, 300.0);
+        assert!(lift_is_a_tap(down, down, 26.0));
+        assert!(lift_is_a_tap(down, glam::Vec2::new(410.0, 320.0), 26.0));
+        assert!(!lift_is_a_tap(down, glam::Vec2::new(400.0, 500.0), 26.0));
+        assert_eq!(KeyboardInset::default().bottom, 0);
+    }
 }

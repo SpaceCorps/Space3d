@@ -77,14 +77,15 @@ program when a pipeline is first built (50–150 ms): prewarm on loading screens
 
 ## Android
 
-One-time setup:
+One-time setup (the exact commands for a Windows PC without Android Studio are in
+SpaceCorps2027's `docs/MOBILE.md`):
 
 ```sh
-# Android Studio → SDK Manager → SDK Tools → NDK (Side by side)
+# SDK: platform-tools, a platform, build-tools, the NDK (sdkmanager or Android Studio)
 export ANDROID_HOME="$HOME/Library/Android/sdk"        # Linux: $HOME/Android/Sdk
 export ANDROID_NDK_ROOT="$ANDROID_HOME/ndk/<version>"
 cargo install cargo-apk --locked
-rustup target add aarch64-linux-android
+# rust-toolchain.toml already lists aarch64-linux-android (phones) and x86_64-linux-android (PC emulators)
 ```
 
 Build and install:
@@ -95,13 +96,147 @@ adb install -r dist/android/<game>.apk
 adb logcat -s RustStdoutStderr
 ```
 
+The engine's own proof is `examples/hello_cube_mobile` (first run on a device: 2026-11-12, the
+Android 16 x86_64 emulator, cargo-apk 0.10.0, NDK 30):
+
+```sh
+cargo apk build -p hello_cube_mobile --lib --target x86_64-linux-android
+adb install -r target/debug/apk/hello_cube.apk
+adb shell am start -n org.spacecorps.space3d.hellocube/android.app.NativeActivity
+```
+
 Packaging metadata (application id, SDK levels, orientation, permissions, bundled `assets/`)
-lives in `[package.metadata.android]` of `mobile/Cargo.toml`. Rendering uses Vulkan (GLES
-fallback); touch input arrives as multi-touch `Touch`es and `Binding::TouchRegion` maps screen
-areas to actions. When the app is backgrounded the surface is dropped and recreated on resume —
-meshes and textures survive.
+lives in `[package.metadata.android]` of `mobile/Cargo.toml`; add `strip = "strip"` there, or a
+debug build's library carries hundreds of MB of debug info into the APK. What the engine does
+on Android:
+
+- **Entry**: `space3d::main!` generates `android_main` (NativeActivity; no Java code).
+  `space3d::platform::android_app()` is the activity's handle from the game's `build` on, and
+  `space3d::platform::mobile::data_dir()` the folder the app may write in.
+- **Assets**: the default asset source is `AndroidAssetSource`, the APK's `assets/` read through
+  the activity's asset manager (they are zip entries, not files). Hot reload is off.
+- **Rendering**: Vulkan (GLES fallback). wgpu's debug flags are off even in a debug build: the
+  emulator's Vulkan driver crashes when objects are named (set `WGPU_DEBUG=1` to ask for them).
+- **Lifecycle**: in the background the surface is dropped and the loop sleeps (no frames, no
+  systems); on resume the surface is recreated, meshes and textures survive. What must stop at
+  once hangs on `space3d_core::BackgroundHooks` (no frame runs to read an event):
+  `AudioPlugin` pauses everything that plays there and resumes it on return.
+- **The activity's end**: when the activity is destroyed (Back, the task swiped away, a
+  re-creation `configChanges` does not cover) the runner leaves the loop and
+  `android_main_entry` ends the process with `_exit`. winit 0.30 only logs `onDestroy`, whose
+  Java side waits for `android_main` to return: without this the process stayed and the next
+  start hung (seen on the emulator; `platform/src/android.rs` asks `Activity.isDestroyed()`
+  through JNI while the app is in the background). A game that exits by itself finishes the
+  activity first (`Activity.finish()`), then the same happens. List every change the game
+  handles itself in the manifest's `configChanges` (the example's `Cargo.toml` has the list),
+  or a split screen, a keyboard plugged in or a new system language restarts the process.
+- **Input**: multi-touch `Touch`es, `Binding::TouchRegion`; `WindowPlugin::touch_as_mouse` makes
+  fingers the mouse too, for controls and a UI written for one (`platform::touch_pointer`): a
+  tap is a left click whose press comes a frame after the pointer (so a UI knows whose click it
+  is), a drag a left drag, a long press (0.5 s, still) a right click, a two-finger pinch the
+  wheel, and the pointer leaves when the finger lifts. The lift after a long press is no left
+  click. Going to the background or losing the focus forgets every finger
+  (`TouchPointer::reset`, `Input::clear_touches`). While a `space3d-ui` text field
+  has the focus (`TextInput::wanted`) the on-screen keyboard is up; it is asked for again a
+  few frames after every tap (a lift within the slop; a finger that scrolled or dragged does
+  not bring it back, and each finger has its own slot, so a second finger does not lose the
+  first one's tap) and after a resume, because nothing tells the app that the player put it
+  away.
+  Two fingers are also a gesture, `Input::gesture()`: this frame's zoom (the ratio of the
+  fingers' distance), turn (radians, clockwise on the screen positive) and pan (pixels), with
+  the point between the fingers. The machine is the resource `touch_pointer::TouchMouse`
+  (`InputPlugin` adds it, off; `touch_as_mouse` turns it on): the window runner sends every
+  finger through `TouchMouse::touch`, and a test or a scripted run calls the same, so it works
+  without a window. Its per-frame step is a `PreUpdate` system at `TouchMouse::ORDER`. Two
+  options in `TouchMouse::pointer.config`: `press_on_move` holds the left press back until
+  the finger leaves the slop (the press lands where the finger went down) or lifts (a tap),
+  so a still finger presses nothing and a long press is the right click alone, for a game
+  that steers by holding the button; `pinch_wheel = false` leaves two fingers to the gesture.
+- **Typing is ASCII only.** A NativeActivity has no `InputConnection`, and winit 0.30's
+  Android backend sends no `Ime` events: text arrives only as key events, which is what a
+  keyboard sends for Latin letters, digits and punctuation. Cyrillic, CJK, swipe typing and
+  autocorrect text do not arrive (read in winit's and android-activity's source; only ASCII
+  was typed on the emulator). The way out is GameActivity (winit's `android-game-activity`,
+  which has GameTextInput) and a Gradle build, or a Java activity with an `InputConnection`.
+- **HTTPS**: `space3d_net::http_client_builder()` checks certificates against the compiled-in
+  Mozilla roots (reqwest's platform verifier needs a Java class a NativeActivity app has not).
+
+- **`SafeArea`** (resource): what the status bar, the navigation bar and a cutout cover of the
+  window; `UiPlugin::inside_safe_area` lays the UI out inside it. Read from Java through JNI
+  (`getRootWindowInsets().getInsets(systemBars | displayCutout)`, Android 11 on; the system
+  window insets before), again when the window's size changes and every 30 frames. Seen on
+  the emulator (Pixel 7 profile, landscape, 2400 x 1080): left 136 (the camera cutout), top 74
+  (the status bar), bottom 63 (the gesture bar). Only when Java gives no answer: the
+  activity's content rectangle, and for an edge-to-edge window 24 dp at the bottom.
+
+- **`KeyboardInset`** (resource): how many pixels of the window's bottom the on-screen
+  keyboard covers (`bottom`), measured from Java (`getRootWindowInsets().getInsets(ime())`,
+  Android 11 on) every few frames while a text field wants text, and 0 when none does. A
+  NativeActivity's window is not resized for the keyboard, so the game moves what is being
+  typed in above that line itself. iOS and the desktop do not report it (always 0).
+
+Not done: the engine does not move the view when the keyboard covers a text field (it only
+measures the keyboard, `KeyboardInset`, and only on Android), stopping the audio stream
+in the background (the sounds are paused, the stream stays open), compressed textures (ASTC),
+and `space3d build --target android` still builds arm64 only.
 
 ## iOS
+
+**What was built and run (2026-11-12, Mac mini, Xcode 27.2, iPhone 18 Pro Simulator on iOS
+27.2):** `hello_cube_mobile` as a program bundled by `scripts/ios-bundle.sh`, no Xcode project.
+It draws the cube on Metal (`adapter=Apple iOS simulator GPU`), loads `assets/proof.png` from
+the bundle, and comes back from the background in the same process. `cargo build` for
+`aarch64-apple-ios` (a device) was not run for this example; nothing ran on a device. The
+XcodeGen route further down was **not** run (xcodegen is not installed on the Mac).
+
+```sh
+rustup target add aarch64-apple-ios-sim aarch64-apple-ios   # rust-toolchain.toml lists them
+# The mobile library built as a program: a Rust `main` runs the app (`space3d::main!` makes
+# one), and cargo links the frameworks itself.
+cargo rustc -p hello_cube_mobile --lib --crate-type bin --target aarch64-apple-ios-sim
+scripts/ios-bundle.sh target/aarch64-apple-ios-sim/debug/hello_cube_mobile HelloCube   org.spacecorps.space3d.hellocube target/ios examples/hello_cube_mobile/assets
+SIM="iPhone 18 Pro"                                         # a device name or UDID
+xcrun simctl boot "$SIM"; xcrun simctl bootstatus "$SIM"
+xcrun simctl install "$SIM" target/ios/HelloCube.app
+xcrun simctl launch --stdout=/tmp/hello.log --stderr=/tmp/hello.log "$SIM" org.spacecorps.space3d.hellocube
+xcrun simctl io "$SIM" screenshot hello.png
+```
+
+What iOS needed from the engine (all in `space3d-platform` unless said):
+
+- **Scenes.** An app linked with the iOS 27 SDK that has not adopted the scene life cycle is
+  stopped at launch (a trap in `UIApplicationEvaluateRuntimeIssueForNoSceneLifecycleAdoption`;
+  winit 0.30 has no scenes). `src/ios.rs` registers a scene delegate class,
+  `Space3dSceneDelegate`, and puts winit's window into the scene when it connects; the app's
+  `Info.plist` must name that class in `UIApplicationSceneManifest` (the bundle script and the
+  template's `project.yml` do).
+- **The window is the screen.** `WindowPlugin`'s width and height are not passed to winit on
+  iOS (they made a 1280 x 720 point window, a third of it off screen), and the renderer and
+  `Input` take `outer_size` (winit's `inner_size` is the safe area only).
+- **The loop waits.** `ControlFlow::Wait` on iOS: a redraw request becomes `drawRect` at the
+  display's pace. With `Poll` the main run loop span hundreds of thousands of times a second.
+- **Log.** winit's iOS loop logs a warning and an info line of its own in every frame;
+  `LogPlugin`'s default filter silences that target on iOS (a game with its own filter adds
+  `winit::platform_impl::ios=error`).
+- **Assets** (`space3d-assets`): a relative root is the bundle's folder. **Files:**
+  `mobile::data_dir()` is `Library/Application Support` in the app's container.
+- **`SafeArea`** (resource): the view's `safeAreaInsets` in pixels; `UiPlugin::inside_safe_area`
+  lays the UI out inside it (off by default). **Not right in landscape in the Simulator:**
+  UIKit answers the portrait insets (62 points top, 34 bottom) for a landscape scene, so the
+  runner turns such insets (`SafeArea::turned_for_landscape`: the top's at both sides, two
+  thirds of the bottom's). A guess until a device shows what UIKit answers there.
+- **`UiPlugin::short_side_points`**: a UI scale from the screen's short side, for a UI made for
+  a laptop's window.
+
+The on-screen keyboard's Return arrives from winit as the text "
+" of an unidentified key;
+the runner makes it the Enter key, pressed and released (unit test in `runner.rs`; not tried
+in the Simulator).
+
+Not done or not seen: touches and the on-screen keyboard (the code paths are winit's; `simctl`
+cannot tap), rotation, audio, a device, signing, `space3d build --target ios`.
+
+### The Xcode route (`space3d build --target ios`; not run)
 
 One-time setup (macOS only):
 
@@ -436,6 +571,62 @@ mode.
 (`WindowIcon { rgba, width, height }` or `WindowIcon::from_image`); on Windows it is also the
 taskbar icon, which Windows 11 otherwise shows blank for an exe without an embedded icon. macOS
 ignores it (the Dock shows the app bundle's icon); the web and mobile use their own manifests.
+
+## Gamepads
+
+Xbox, PlayStation and other USB or Bluetooth controllers (not HOTAS flight sticks). A game
+reads them from `Input` (`space3d_platform::gamepad` has the whole story in its module docs):
+
+```rust
+let input = ctx.resources.expect::<Input>();
+for change in input.gamepad_changes() { /* GamepadChange::Connected(id) / Disconnected(id), this frame */ }
+if input.any_gamepad_just_pressed(GamepadButton::South) { /* A / Cross on any pad */ }
+let stick = input.any_gamepad_stick(GamepadAxis::LeftStickX, GamepadAxis::LeftStickY); // the pad pushed furthest, whole; x right, y UP
+let lt = input.any_gamepad_axis(GamepadAxis::LeftTrigger); // one axis: 0..1 (a stick's: -1..1)
+let name = input.gamepad(id).map(|p| p.name());            // "Xbox 360 Controller"; may be empty
+```
+
+Buttons are named by their place (`South` = A / Cross, `East` = B / Circle, `West` = X / Square,
+`North` = Y / Triangle, `LeftShoulder`, `LeftTrigger`, `LeftThumb`, `Start`, `Select`, `Mode`,
+the d-pad). A trigger is an axis 0..1 and a button (down from 0.5, up again below 0.4). Sticks
+have a radial dead zone of 0.15 taken out and the rest stretched to 0..1 (`gamepad::dead_zone`).
+`Binding::GamepadButton` / `Binding::GamepadAxis` bind actions. Tests and scripts inject:
+`Input::inject_gamepad_connected_named`, `inject_gamepad_button`, `inject_gamepad_axis`,
+`inject_gamepad_disconnected` (and `space3d-test`'s `InputEvent::Gamepad*`).
+
+| Platform | Backend | What works | Notes |
+|---|---|---|---|
+| Windows | `gilrs` 0.11 (Windows.Gaming.Input) | everything, hot plug: as built and unit-tested; **not yet seen with a pad, real or virtual** (below) | Windows gives pad input to the **focused** window only. |
+| macOS | `gilrs` (IOKit) | compiles in the dependency graph; **not built or run on a Mac yet** | IOKit gives pad input to every process: the runner holds it back while the window has no focus (below). |
+| Linux | `gilrs` (evdev) | **not built or run on Linux yet** | evdev gives pad input to every process, as IOKit. Needs `libudev` at run time and `libudev-dev` + `pkg-config` to build (the game's build images must have them). |
+| Android | winit key events (`runner.rs`, `gamepad::AndroidPads`), `InputDevice` over JNI (`android::gamepads`) | **The left stick and the face buttons**: A B X Y, L1 R1, L3 R3, Start, Select, Mode, and the left stick once a button was pressed. L2 R2 only where the pad sends them as keys too (PlayStation pads are said to; Xbox pads send axes only). **Not**: the d-pad of an Xbox or PlayStation pad (a hat axis), the right stick, analog triggers. Unplug: seen within a second. | winit 0.30 has no gamepad events and marks every motion event handled, so Android's own stick-to-d-pad fallback never runs. A stick arrives as a "touch" move from a device no finger went down on, at (`AXIS_X`, `AXIS_Y`); from a device already known as a pad **by a button** it is the left stick, from any other it is dropped (a sensor with axes is no controller), and none reaches the fingers. A d-pad works only on a pad that sends arrow keys. The rest needs winit patched (third_party). winit has no device-removed event and hides the device number, so the runner asks `InputDevice.getDeviceIds()` once a second: when a listed gamepad is gone, **every** pad known is disconnected with what it held (one still there is a pad again from its next button), and a pad has the OS's name only while Android lists exactly one. Compiles for both Android targets; **not run on a device** (the JNI calls included). |
+| iOS | none | nothing | `GCController` through objc2: not done. |
+| Web | none | nothing | gilrs has a `navigator.getGamepads` backend; the dependency is desktop-only for now. |
+
+**Focus.** Only the focused window obeys a pad, on every desktop OS: a focus loss releases every
+pad button and rests the axes (`Input::release_all`), and while the window has no focus, or the
+run is a background one, the runner takes only a pad's coming and going from gilrs
+(`Pads::apply_unfocused`; a stick's raw place is still remembered, so its first move after the
+focus is back is right). Without this a pad used in another game or a browser would fly the ship
+of a window in the background on Linux and macOS.
+
+**The backend's cost and its switch.** gilrs's Windows backend is a thread that asks the OS for
+the controllers every 8 ms for the whole run, pad or no pad (Linux and macOS start a thread each
+too). It is **not started in a background run** (`background_mode()`: tests, smoke runs, headless
+QA clients; a scripted pad through `Input::inject_gamepad_*` still works there), and
+`SPACE3D_GAMEPAD=off` (or `0`, `false`, `no`) leaves it unstarted in any run. Its cost in a
+focused game was not measured.
+
+`cargo run -p space3d-platform --example virtual_pad` (Windows) checks the real backend
+without a pad: it plugs a virtual Xbox 360 pad in through the ViGEmBus driver, drives every
+button, both sticks and the triggers, pulls it out mid-hold and plugs it in again, and compares
+each step with `Input` (exit code 0 / 1; 2 without the driver or the focus). `--log-only`
+prints what any real pad does.
+
+On the build PC (2026-11-15) the example exited 2: the `ViGEmBus` driver service runs, but there is
+no ViGEm bus device for the client to open (`BusNotFound`), and no pad was connected (`--log-only`:
+"no pad"). So the gilrs path has compiled and its mapping is unit-tested, and a real or virtual pad
+has not driven it yet.
 
 ## CI and releases
 

@@ -73,6 +73,11 @@ fn fxaa_softens_edges() {
 }
 
 #[test]
+fn fxaa_intermediate_is_dithered() {
+    cases::fxaa_intermediate_is_dithered(headless_app);
+}
+
+#[test]
 fn film_grain_is_seeded() {
     cases::film_grain_is_seeded(headless_app);
 }
@@ -156,6 +161,11 @@ fn auto_exposure_downlevel_history_and_steady_state() {
 #[test]
 fn grading_matches_formulas() {
     cases::grading_matches_formulas(headless_app);
+}
+
+#[test]
+fn display_gamma_matches_formula() {
+    cases::display_gamma_matches_formula(headless_app);
 }
 
 #[test]

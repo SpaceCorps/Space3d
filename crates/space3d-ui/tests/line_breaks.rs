@@ -1,13 +1,15 @@
-//! Two rules of Unicode line breaking (UAX #14) that egui lacks and Space3d's patched epaint
+//! Three rules of Unicode line breaking (UAX #14) that egui lacks and Space3d's patched epaint
 //! (`third_party/epaint`, `text/kinsoku.rs`; `third_party/README.md`, `docs/ui.md`) applies to
-//! text in every script: no break just before a no-break space U+00A0 (class GL), and no break
-//! after an ASCII opening bracket `(` `[` `{` (class OP).
+//! text in every script: no break just before a no-break space U+00A0 (class GL), no break
+//! after an ASCII opening bracket `(` `[` `{` (class OP), and no break on either side of a word
+//! joiner U+2060 (class WJ).
 //!
 //! The scenario is a chat line, which is where they showed: "12:04  [T]\u{a0}Name: text", the
 //! time, the sender's company tag joined to the name with a no-break space, the name, the
 //! message, wrapped at every width a chat window can have. Upstream egui left the tag alone
 //! after the time ("[T]" | " Name:"), and for a name longer than a row split it: "[G]" |
-//! " Wwww…", then "[" | "G] Wwww…". The unit tests in the vendored epaint
+//! " Wwww…", then "[" | "G] Wwww…"; a clan tag whose marks are glued to what follows with word
+//! joiners wrapped as "[A-" | "B]". The unit tests in the vendored epaint
 //! (`text::kinsoku::tests`) hold the rules character by character; this file lays out whole
 //! lines through egui.
 //!
@@ -212,4 +214,67 @@ fn a_tag_with_a_plain_space_is_never_split() {
     }
     // The space is a legal break: the rule is the no-break space's, not a ban on tags at row ends.
     assert!(alone > 0, "a plain space never let the tag end a row");
+}
+
+/// A clan tag the way the SpaceCorps chat lays it out, "[VNGD]" with a word joiner (U+2060,
+/// invisible, no break on either side of it) after each ASCII mark, so no wrapped line splits
+/// the tag: "19:42  [T]\u{a0}[A-\u{2060}B]\u{a0}name: text" at every chat width that holds the
+/// tag. Upstream egui and the rules above without the joiner's: "[A-" | "B]" at most widths.
+#[test]
+fn a_clan_tag_glued_with_word_joiners_is_never_split() {
+    const JOINER: char = '\u{2060}';
+    let ctx = context();
+    let longest = "W".repeat(32);
+    let mut layouts = 0;
+    let mut bad = Vec::new();
+    for clan in ["A-B", "A.B", "-_-", "!?", "A/B", "A:B", "A-B-C"] {
+        let mut tag = String::from("[");
+        for c in clan.chars() {
+            tag.push(c);
+            if c.is_ascii_punctuation() {
+                tag.push(JOINER);
+            }
+        }
+        tag.push(']');
+        for name in ["nova", "Commander_Starfighter_Alpha27", longest.as_str()] {
+            for width in WIDTHS {
+                let font = FontId::proportional(12.5);
+                let mut job = LayoutJob::default();
+                job.append(
+                    "19:42  ",
+                    0.0,
+                    TextFormat::simple(FontId::monospace(10.5), Color32::GRAY),
+                );
+                for (text, color) in [
+                    (format!("[T]{TAG_GAP}"), Color32::GREEN),
+                    (format!("{tag}{TAG_GAP}"), Color32::GOLD),
+                    (format!("{name}:"), Color32::LIGHT_BLUE),
+                ] {
+                    job.append(&text, 0.0, TextFormat::simple(font.clone(), color));
+                }
+                job.append(
+                    "anyone for the gate run?",
+                    6.0,
+                    TextFormat::simple(font, Color32::WHITE),
+                );
+                job.wrap.max_width = width as f32;
+                let rows = rows(&ctx, job);
+                layouts += 1;
+                // Character offsets of the tag in the line, and of every row break.
+                let line = rows.concat();
+                let start = line[..line.find(&tag).expect("the tag is in the line")].chars().count();
+                let end = start + tag.chars().count();
+                let mut offset = 0;
+                let split = rows[..rows.len() - 1].iter().any(|row| {
+                    offset += row.chars().count();
+                    start < offset && offset < end
+                });
+                if split {
+                    bad.push((width, tag.clone(), rows));
+                }
+            }
+        }
+    }
+    assert!(layouts > 3000, "{layouts} layouts");
+    assert!(bad.is_empty(), "{} widths: {:#?}", bad.len(), &bad[..bad.len().min(4)]);
 }

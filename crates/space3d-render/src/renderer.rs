@@ -481,6 +481,14 @@ async fn create_instance(backends: Option<wgpu::Backends>, display: Option<Displ
     if let Some(b) = backends {
         desc.backends = b;
     }
+    // Android: a debug build asks for wgpu's debug flags, which name every Vulkan object
+    // (VK_EXT_debug_utils). The emulator's Vulkan driver crashes in that call
+    // (vk_common_SetDebugUtilsObjectNameEXT, a null read while the device is created), and a
+    // phone has no validation layers installed anyway. Off unless WGPU_DEBUG / WGPU_VALIDATION ask.
+    #[cfg(target_os = "android")]
+    {
+        desc.flags = wgpu::InstanceFlags::empty().with_env();
+    }
     #[cfg(target_arch = "wasm32")]
     {
         wgpu::util::new_instance_with_webgpu_detection(desc).await

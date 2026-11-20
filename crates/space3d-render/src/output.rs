@@ -191,6 +191,23 @@ fn pbr_neutral_no_toe(c_in: Vec3) -> Vec3 {
     c.lerp(Vec3::splat(new_peak), g)
 }
 
+/// [`crate::PostProcess::display_gamma`] as the composite uses it: inside
+/// [`crate::DISPLAY_GAMMA_RANGE`], 1 for NaN and infinities.
+pub(crate) fn display_gamma_of(gamma: f32) -> f32 {
+    let (lo, hi) = crate::DISPLAY_GAMMA_RANGE;
+    if gamma.is_finite() { gamma.clamp(lo, hi) } else { 1.0 }
+}
+
+/// CPU mirror of the composite's display gamma ([`crate::PostProcess::display_gamma`],
+/// `post_display_gamma` in composite.wgsl): the sRGB-encoded value `encoded` (0..1) as it is
+/// displayed at `gamma`, `encoded^(1 / gamma)`. 0 and 1 stay; at 1 it is `encoded` itself. For
+/// UI that previews the setting (a calibration strip) and for tests.
+pub fn apply_display_gamma(encoded: f32, gamma: f32) -> f32 {
+    let e = encoded.clamp(0.0, 1.0);
+    let gamma = display_gamma_of(gamma);
+    if gamma == 1.0 { e } else { e.powf(1.0 / gamma) }
+}
+
 /// PCG hash (`s3d_pcg` in `shaders/common/hash.wgsl`, bit-identical): the seed of every noise
 /// (dither, grain, particles) — see graphics spec §4.3.
 pub(crate) fn pcg(v: u32) -> u32 {
@@ -351,6 +368,50 @@ mod tests {
         assert!((rb(graded) / rb(plain) - 1.0).abs() < 0.05, "{graded:?} vs {plain:?}");
         assert!(sat(graded) > sat(plain));
         assert!(sat(look(Tonemapper::AgX, true, laser)) > sat(look(Tonemapper::AgX, false, laser)));
+    }
+
+    /// The display gamma's golden values: the encoded value to the power 1 / gamma. 0 and 1 are
+    /// fixed points, 1 is the identity bit for bit, and out-of-range settings are clamped.
+    #[test]
+    fn display_gamma_golden_values() {
+        for code in 0..=255u8 {
+            let e = f32::from(code) / 255.0;
+            assert_eq!(apply_display_gamma(e, 1.0).to_bits(), e.to_bits(), "{code}");
+            assert!(
+                apply_display_gamma(e, 1.3) >= e && apply_display_gamma(e, 0.8) <= e,
+                "{code}"
+            );
+        }
+        assert!((apply_display_gamma(0.5, 1.2) - 0.561_231).abs() < 1e-6);
+        assert!((apply_display_gamma(0.5, 0.8) - 0.420_448).abs() < 1e-6);
+        assert!((apply_display_gamma(0.5, 2.0) - 0.5f32.sqrt()).abs() < 1e-6);
+        for g in [0.25, 0.7, 1.0, 1.5, 4.0] {
+            assert_eq!(
+                (apply_display_gamma(0.0, g), apply_display_gamma(1.0, g)),
+                (0.0, 1.0),
+                "{g}"
+            );
+        }
+        let code = |c: u8, g: f32| (apply_display_gamma(f32::from(c) / 255.0, g) * 255.0).round() as u8;
+        // Dark codes (a calibration strip's 4, 8 and 16) and middle grey's 118.
+        assert_eq!([4, 8, 16, 118].map(|c| code(c, 0.7)), [1, 2, 5, 85]);
+        assert_eq!([4, 8, 16, 118].map(|c| code(c, 1.3)), [10, 18, 30, 141]);
+        assert_eq!([4, 8, 16, 118].map(|c| code(c, 1.5)), [16, 25, 40, 153]);
+        // Clamped to the range; NaN and infinities are 1; the input is clamped to 0..1.
+        let (lo, hi) = crate::DISPLAY_GAMMA_RANGE;
+        assert_eq!(apply_display_gamma(0.5, 100.0), apply_display_gamma(0.5, hi));
+        assert_eq!(apply_display_gamma(0.5, 0.0), apply_display_gamma(0.5, lo));
+        assert_eq!(
+            (
+                apply_display_gamma(0.5, f32::NAN),
+                apply_display_gamma(0.5, f32::INFINITY)
+            ),
+            (0.5, 0.5)
+        );
+        assert_eq!(
+            (apply_display_gamma(-1.0, 1.3), apply_display_gamma(2.0, 1.3)),
+            (0.0, 1.0)
+        );
     }
 
     #[test]

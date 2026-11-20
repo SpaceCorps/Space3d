@@ -338,11 +338,22 @@ fn screen_info(sys: &SystemCtx, settings: &UiPlugin) -> ([u32; 2], f32, bool, us
     };
     let native_ppp = settings
         .pixels_per_point
+        .or_else(|| {
+            let points = settings.short_side_points.filter(|p| *p > 0.0)?;
+            Some((size[0].min(size[1]) as f32 / points).max(1.0))
+        })
         .unwrap_or_else(|| window.map_or(1.0, |w| w.scale_factor as f32))
         .max(0.1);
     let focused = window.is_none_or(|w| w.focused);
     let max_texture_side = renderer.map_or(2048, |r| r.device().limits().max_texture_dimension_2d as usize);
     (size, native_ppp, focused, max_texture_side)
+}
+
+/// A part of the UI's CPU work in a frame, timed while the returned guard lives: a trace span of the kind the schedule opens round every
+/// system (`"system"`, with a `name`), so a profiler lists it beside them ("ui::end_frame.tessellate"). Costs nothing while no
+/// subscriber takes trace spans.
+fn part(name: &'static str) -> tracing::span::EnteredSpan {
+    tracing::trace_span!("system", name = name).entered()
 }
 
 /// `Stage::PreUpdate`: translate input and begin the egui pass.
@@ -389,8 +400,23 @@ pub(crate) fn begin_frame(
         o.set_scale_factor(ppp);
     }
 
+    // `UiPlugin::inside_safe_area`: the UI keeps out of a phone's notch and home bar.
+    let safe = sys
+        .resources
+        .get::<space3d_platform::SafeArea>()
+        .copied()
+        .filter(|_| settings.inside_safe_area)
+        .unwrap_or_default();
     let e = sys.resources.expect_mut::<EguiContext>();
-    let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size[0] as f32 / ppp, size[1] as f32 / ppp));
+    let full = egui::vec2(size[0] as f32 / ppp, size[1] as f32 / ppp);
+    let (left, top) = (safe.left as f32 / ppp, safe.top as f32 / ppp);
+    let screen = egui::Rect::from_min_max(
+        egui::pos2(left, top),
+        egui::pos2(
+            (full.x - safe.right as f32 / ppp).max(left + 1.0),
+            (full.y - safe.bottom as f32 / ppp).max(top + 1.0),
+        ),
+    );
     let mut raw = egui::RawInput {
         screen_rect: Some(screen),
         max_texture_side: Some(max_texture_side),
@@ -426,7 +452,10 @@ pub(crate) fn begin_frame(
     // An inserted or changed `UiTheme` restyles egui once, between passes (no resource: the
     // style is never touched).
     theme.sync(&e.ctx, ui_theme.as_ref());
+    // (egui drops here what the last pass laid out and this one has not asked for yet: the galleys)
+    let span = part("ui::begin_frame.pass");
     e.ctx.begin_pass(raw);
+    drop(span);
     e.in_pass = true;
     // `run_ui`'s top-level ui, handed to the plugins' begin hooks now and end hooks in
     // `end_frame`. What they claim (a panel...) is not available to root-ui systems.
@@ -446,6 +475,15 @@ pub(crate) fn begin_frame(
 /// `Stage::PostUpdate`: end the pass, tessellate and hand the frame to the render overlay.
 pub(crate) fn end_frame(sys: &mut SystemCtx, overlay: &Arc<Mutex<EguiOverlay>>) {
     let natives = crate::textures::resolve_native_views(sys.resources);
+    // A focused text field asks the platform for typed text: on a phone, the on-screen
+    // keyboard (`space3d_platform::TextInput`; the last pass's answer, one frame late).
+    // (a text field, not any focus: a focused button takes Enter and wants no keyboard on screen)
+    if let Some(wanted) = sys.resources.get::<EguiContext>().map(|e| e.ctx().text_edit_focused()) {
+        let text_input = sys.resources.init::<space3d_platform::TextInput>();
+        if text_input.wanted != wanted {
+            text_input.wanted = wanted;
+        }
+    }
     let Some(e) = sys.resources.get_mut::<EguiContext>() else {
         return;
     };
@@ -473,7 +511,9 @@ pub(crate) fn end_frame(sys: &mut SystemCtx, overlay: &Arc<Mutex<EguiOverlay>>) 
     let any_down = e.ctx.input(|i| i.pointer.any_down());
     e.wants_pointer = e.ctx.egui_is_using_pointer() || (e.pointer_over && !any_down);
     e.wants_keyboard = e.ctx.egui_wants_keyboard_input();
+    let span = part("ui::end_frame.pass");
     let output = e.end_pass();
+    drop(span);
     for cmd in &output.platform_output.commands {
         if let egui::OutputCommand::CopyText(text) = cmd {
             e.clipboard.clone_from(text);
@@ -485,7 +525,9 @@ pub(crate) fn end_frame(sys: &mut SystemCtx, overlay: &Arc<Mutex<EguiOverlay>>) 
     let cursor_changed = new_cursor != e.cursor_icon || !e.cursor_sent;
     e.cursor_icon = new_cursor;
     let ppp = output.pixels_per_point;
+    let span = part("ui::end_frame.tessellate");
     let primitives = e.ctx.tessellate(output.shapes, ppp);
+    drop(span);
     let (mut vertices, mut indices) = (0, 0);
     for p in &primitives {
         if let egui::epaint::Primitive::Mesh(m) = &p.primitive {

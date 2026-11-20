@@ -192,6 +192,13 @@ pub struct DirectionalShadow {
     pub strength: f32,
     /// Extra distance toward the light searched for casters. Default 500.
     pub caster_depth: f32,
+    /// An instance whose bounding sphere is under this many pixels in radius on the screen of
+    /// the camera the map is fitted to (`ShadowFit::Camera`'s, else the first primary scene
+    /// view; perspective cameras only) is left out of the shadow map: it neither shadows
+    /// others nor itself. Default 0: everything casts. A cut for the cheaper tiers, where the
+    /// shadow pass is vertex work for shadows a few pixels wide; an instance crossing the size
+    /// gains or loses its shadow at once (no hysteresis).
+    pub min_caster_pixels: f32,
 }
 
 impl Default for DirectionalShadow {
@@ -205,6 +212,7 @@ impl Default for DirectionalShadow {
             slope_bias: 1.5,
             strength: 1.0,
             caster_depth: 500.0,
+            min_caster_pixels: 0.0,
         }
     }
 }
@@ -239,6 +247,11 @@ impl DirectionalShadow {
     /// Set [`Self::strength`].
     pub fn with_strength(mut self, s: f32) -> Self {
         self.strength = s;
+        self
+    }
+    /// Set [`Self::min_caster_pixels`].
+    pub fn with_min_caster_pixels(mut self, pixels: f32) -> Self {
+        self.min_caster_pixels = pixels;
         self
     }
 }

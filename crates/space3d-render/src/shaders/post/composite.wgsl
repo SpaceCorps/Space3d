@@ -10,8 +10,9 @@
 // groups) → exposure (manual, or 2^(E + compensation) with auto exposure) → bloom (at the same
 // offset) → vignette →
 // white balance × saturation, contrast → `post_hdr_hook` → tonemap → lift/gamma/gain, LUT (in
-// the sRGB-encoded display space) → `post_ldr_hook` → in the last pass: grain → dither → encode
-// → re-premultiply. The grading hooks (`ColorGrading::shader`, spliced at the HOOKS marker at
+// the sRGB-encoded display space) → `post_ldr_hook` → display gamma (`PostProcess::display_gamma`,
+// on the encoded value) → in the last pass: grain → dither → encode
+// (before FXAA: the dither of the 8-bit intermediate) → re-premultiply. The grading hooks (`ColorGrading::shader`, spliced at the HOOKS marker at
 // the end) are identity functions unless a hook shader defines them.
 
 // 0: D has an sRGB format (hardware encodes), 1: 8-bit D without one (encode here),
@@ -31,13 +32,15 @@ const S3D_POST_TRANSPARENT: u32 = 512u;
 const S3D_POST_SCENE_ALPHA: u32 = 1024u;
 const S3D_POST_EXACT: u32 = 2048u;
 const S3D_POST_GRADE_LDR: u32 = 4096u;
+const S3D_POST_BLOOM_BILINEAR: u32 = 8192u;
+const S3D_POST_DISPLAY_GAMMA: u32 = 16384u;
 
 // Matches `GpuPost` (post/chain.rs): one 256-byte slot per post group.
 struct PostParams {
     out_rect: vec4<f32>,        // the group's rect in D pixels (x, y, w, h), unclipped
     src_rect: vec4<f32>,        // its rect in S pixels, unclipped
     src_texel: vec4<f32>,       // 1/S.w, 1/S.h, rect aspect (w/h), D height
-    exposure: vec4<f32>,        // linear multiplier (the compensation with auto exposure), -, bloom intensity, bloom mode (0 add, 1 mix)
+    exposure: vec4<f32>,        // linear multiplier (the compensation with auto exposure), 1 / display gamma, bloom intensity, bloom mode (0 add, 1 mix)
     vignette: vec4<f32>,        // intensity, smoothness, roundness, center.x
     vignette_color: vec4<f32>,  // linear multiplier at full vignette (rgb), center.y
     lens: vec4<f32>,            // chromatic aberration scale (S px⁻²), -, distortion scale (view heights per encoded unit), distortion chromatic split
@@ -157,15 +160,29 @@ fn post_grade_ldr(c: vec3<f32>) -> vec3<f32> {
     return s3d_srgb_to_linear(clamp(e, vec3<f32>(0.0), vec3<f32>(1.0)));
 }
 
+// The display gamma (`PostProcess::display_gamma`, a player's brightness calibration): the
+// sRGB-encoded display color raised to 1 / gamma, the last step of the grading. Black and white
+// stay, the midtones move; nothing before the tonemapper sees it, so exposure, bloom and the
+// grading are what they were. Display-linear in and out. CPU mirror: `apply_display_gamma`.
+fn post_display_gamma(c: vec3<f32>) -> vec3<f32> {
+    let e = s3d_linear_to_srgb(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)));
+    return s3d_srgb_to_linear(pow(e, vec3<f32>(post.exposure.y)));
+}
+
 // Bloom level 0 at S position `s` (already exposed and thresholded). The chain covers the
 // rect's part inside S; its prefilter centers each texel half a scene pixel before the 2 × 2
 // block it stands for (bloom.wgsl `fs_prefilter`), so the lookup moves half a pixel on. Level 0
 // is magnified by a cubic B-spline (4 bilinear taps, Sigg & Hadwiger 2005) rather than bilinear:
 // smoother, and every texel adds the same light to the frame at any magnification (bilinear at
-// 2.67×, 720p and 1440p, weighed texels 3 % apart, so a small glow pulsed as it moved).
+// 2.67×, 720p and 1440p, weighed texels 3 % apart, so a small glow pulsed as it moved). The low
+// tiers (`Bloom::fast`, S3D_POST_BLOOM_BILINEAR) take the one bilinear tap: a third of this
+// pass on an integrated GPU.
 fn post_bloom(s: vec2<f32>) -> vec3<f32> {
     let clip = post_scene_clip();
     let uv = (s + 0.5 - clip.xy) / max(clip.zw - clip.xy, vec2<f32>(1.0));
+    if (post_has(S3D_POST_BLOOM_BILINEAR)) {
+        return textureSampleLevel(bloom_tex, post_sampler, uv, 0.0).rgb;
+    }
     let size = vec2<f32>(textureDimensions(bloom_tex));
     let t = uv * size - 0.5;
     let i = floor(t);
@@ -270,12 +287,33 @@ fn post_grain(e: vec3<f32>, px: vec2<f32>) -> vec3<f32> {
     return e + vec3<f32>(n * amp);
 }
 
+// Decorrelates the dither of the LDR intermediate L from the last pass's (both are hashed from
+// the frame's two dither seeds at the same pixel).
+const S3D_POST_DITHER_L: u32 = 0xA511E9B3u;
+
+// The dither of the 8-bit LDR intermediate L (the composite's output when FXAA follows):
+// triangular, ±1 LSB in the encoded space, before the sRGB target quantizes. Without it L holds
+// the bands of a smooth dark gradient and the last pass's dither only adds noise to them.
+// `rgb_in` is display-linear, and so is the result (L's format encodes).
+fn post_dither_intermediate(rgb_in: vec3<f32>, px_f: vec2<f32>) -> vec3<f32> {
+    let px = vec2<u32>(px_f);
+    let n = post_hash01(px, post_seeds.y ^ S3D_POST_DITHER_L) - post_hash01(px, post_seeds.z ^ S3D_POST_DITHER_L);
+    let e = s3d_linear_to_srgb(clamp(rgb_in, vec3<f32>(0.0), vec3<f32>(1.0))) + vec3<f32>(n / 255.0);
+    return s3d_srgb_to_linear(clamp(e, vec3<f32>(0.0), vec3<f32>(1.0)));
+}
+
 // Last-pass finish: grain and dither (triangular, ±1 LSB) in the encoded space, and the encoding
 // for D. `rgb_in` is display-linear.
 fn post_finish(rgb_in: vec3<f32>, px_f: vec2<f32>) -> vec3<f32> {
+    return post_finish_with(rgb_in, px_f, true);
+}
+
+// `post_finish`, with the dither only where `may_dither` (the FXAA pass leaves it out where it
+// copied an already dithered pixel of L).
+fn post_finish_with(rgb_in: vec3<f32>, px_f: vec2<f32>, may_dither: bool) -> vec3<f32> {
     let grain = post_has(S3D_POST_GRAIN);
     // Float D keeps linear values and gets no dither.
-    let dither = post_has(S3D_POST_DITHER) && S3D_POST_OUT != 2u;
+    let dither = may_dither && post_has(S3D_POST_DITHER) && S3D_POST_OUT != 2u;
     if (!grain && !dither) {
         if (S3D_POST_OUT == 1u) {
             return s3d_linear_to_srgb(clamp(rgb_in, vec3<f32>(0.0), vec3<f32>(1.0)));
@@ -346,8 +384,13 @@ fn fs_composite(in: FullscreenOut) -> @location(0) vec4<f32> {
         rgb = post_grade_ldr(rgb);
     }
     rgb = post_ldr_hook(rgb, uv);
+    if (post_has(S3D_POST_DISPLAY_GAMMA)) {
+        rgb = post_display_gamma(rgb);
+    }
     if (post.flags.z != 0u) {
         rgb = post_finish(rgb, in.pos.xy);
+    } else if (post_has(S3D_POST_DITHER)) {
+        rgb = post_dither_intermediate(rgb, in.pos.xy);
     }
     if (transparent) {
         rgb = rgb * a;

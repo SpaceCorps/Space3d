@@ -344,6 +344,7 @@ struct BloomRepr {
     mip_count: u32,
     max_mip_height: u32,
     min_rect_height: u32,
+    fast: bool,
 }
 
 impl Default for BloomRepr {
@@ -364,6 +365,7 @@ impl BloomRepr {
             mip_count: b.mip_count,
             max_mip_height: b.max_mip_height,
             min_rect_height: b.min_rect_height,
+            fast: b.fast,
         }
     }
     fn value(&self) -> Bloom {
@@ -377,6 +379,7 @@ impl BloomRepr {
             mip_count: self.mip_count,
             max_mip_height: self.max_mip_height,
             min_rect_height: self.min_rect_height,
+            fast: self.fast,
         }
     }
 }
@@ -554,6 +557,7 @@ struct PostProcessRepr {
     distortion: DistortionRepr,
     color_grading: ColorGradingRepr,
     dither: bool,
+    display_gamma: f32,
 }
 
 impl Default for PostProcessRepr {
@@ -585,6 +589,7 @@ impl PostProcessRepr {
             distortion: DistortionRepr::of(&p.distortion),
             color_grading: ColorGradingRepr::of(&p.color_grading),
             dither: p.dither,
+            display_gamma: p.display_gamma,
         })
     }
     fn post(&self) -> PostProcess {
@@ -604,6 +609,7 @@ impl PostProcessRepr {
             distortion: self.distortion.value(),
             color_grading: self.color_grading.value(),
             dither: self.dither,
+            display_gamma: self.display_gamma,
         }
     }
 }
@@ -630,6 +636,7 @@ struct DirectionalShadowRepr {
     slope_bias: f32,
     strength: f32,
     caster_depth: f32,
+    min_caster_pixels: f32,
 }
 
 impl Default for DirectionalShadowRepr {
@@ -663,6 +670,7 @@ impl DirectionalShadowRepr {
             slope_bias: s.slope_bias,
             strength: s.strength,
             caster_depth: s.caster_depth,
+            min_caster_pixels: s.min_caster_pixels,
         })
     }
     fn shadow(&self) -> DirectionalShadow {
@@ -686,6 +694,7 @@ impl DirectionalShadowRepr {
             slope_bias: self.slope_bias,
             strength: self.strength,
             caster_depth: self.caster_depth,
+            min_caster_pixels: self.min_caster_pixels,
         }
     }
 }

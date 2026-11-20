@@ -8,9 +8,9 @@ through `[patch.crates-io]` in the root `Cargo.toml`. They are not workspace mem
 
 | crate | what Space3d changes | patch |
 |---|---|---|
-| [`epaint`](epaint) | kinsoku (禁則処理) line breaking for Chinese and Japanese, and two rules of Unicode line breaking (UAX #14) for every script: no break before a no-break space, none after an ASCII opening bracket | [`epaint.kinsoku.patch`](epaint.kinsoku.patch) |
+| [`epaint`](epaint) | kinsoku (禁則処理) line breaking for Chinese and Japanese, and three rules of Unicode line breaking (UAX #14) for every script: no break before a no-break space, none after an ASCII opening bracket, none on either side of a word joiner | [`epaint.kinsoku.patch`](epaint.kinsoku.patch) |
 
-## epaint: kinsoku line breaking (and two UAX #14 rules)
+## epaint: kinsoku line breaking (and three UAX #14 rules)
 
 Vendored version: **epaint 0.36.2** (egui commit `49682f8baa058bf49e011035cfbd6e825f88a5ef`, `crates/epaint`).
 
@@ -43,6 +43,13 @@ than a row as "[" | "T] Wwww…" (egui breaks after any ASCII mark when a row ha
 The rules were found by the SpaceCorps chat (SpaceCorps2027 commit 016464c, its
 `a_wrapped_sender_keeps_its_company_tag` test) and are ported here.
 
+A third rule, no break on either side of a word joiner U+2060 (class WJ, LB11), came with the
+game's patch too and was missed by the first port (`VERSION` 5 has it): the chat glues the marks
+of a clan tag to what follows with word joiners ("[A-\u{2060}B]"), which wrapped as "[A-" |
+"B]" with kinsoku's own joiner rule, which holds only next to Chinese and Japanese text. It
+changes nothing for text without U+2060 or U+FEFF (the measurements below predate it and still
+hold for such text).
+
 The patch started as the one the SpaceCorps game carried in its own `third_party/epaint`
 (SpaceCorps2027 commits b8af874, "kinsoku line breaking for Chinese and Japanese", and e531f10,
 "kinsoku around Latin words and numbers, and none of it in German"), which Space3d now owns so
@@ -51,7 +58,7 @@ that games don't maintain a copy. It was reviewed and rewritten as a self-contai
 * **`src/text/kinsoku.rs`** (new, public as `epaint::text::kinsoku`, also
   `egui::epaint::text::kinsoku`): the character classes and `line_break(before, after)`, which
   answers `Prohibited`, `Allowed` or `Upstream` for every position between two characters (the
-  two UAX #14 rules are pair rules of it, `is_unicode_glue`, so the hook needed no change);
+  three UAX #14 rules are pair rules of it, `is_unicode_glue`, so the hook needed no change);
   crate-private, the glyph-level part the hook uses (`Scan`, which walks a paragraph and also
   looks past spaces and into clusters, with a shortcut for the most common pairs; the fit
   checks of the fallbacks; `may_leave_row_empty`, below); the unit tests.
@@ -69,7 +76,8 @@ that games don't maintain a copy. It was reviewed and rewritten as a self-contai
 * **`src/text/mod.rs`**: `pub mod kinsoku;` (one line).
 
 `font.rs` (egui's `is_cjk_break_allowed` list) is untouched: kinsoku's list is a superset. The
-rules' revision is `kinsoku::VERSION` (4 with the UAX #14 rules; 3 before).
+rules' revision is `kinsoku::VERSION` (5 with the word-joiner rule; 4 with the other two UAX #14
+rules; 3 before).
 
 ### The rules
 
@@ -95,6 +103,7 @@ Chinese or Japanese text next to the position (UAX #14, listed after the table):
 |---|---|
 | no break after an opening bracket (class OP, LB14) | the ASCII `(` `[` `{`, before any character: "[" \| "T]" and "(" \| "x" are gone, also across the spaces after it (`OP SP* ×`: "( x" never ends a row with "( ", as for the brackets of Chinese and Japanese text). Closing brackets, the typographic quotes “ ‘ « (German closes quotes with them) and every other mark are egui's. |
 | no break before a no-break space (class GL, LB12a) | U+00A0 after any character but a space: a letter, digit, mark, closing bracket, hyphen, Chinese or Japanese character, or another no-break space. After a space the break stays egui's (the space breaks after itself: "a " \| "\u{a0}b"). Only the break before it is ruled on: after it egui decides as before (a break after it stays a last resort, or before Chinese or Japanese). Unlike UAX #14 a hyphen before it doesn't lift the rule: no row starts with the blank. |
+| no break on either side of a word joiner (class WJ, LB11) | U+2060 and U+FEFF, next to any character but a space (a no-break space counts as a character here): "-" \| "\u{2060}B", "A" \| "\u{2060}.", "\u{2060}" \| "B" are gone, whatever the script; next to a space egui decides (the space breaks after itself), as for the no-break space. The zero-width joiner U+200D is not one: it glues only next to Chinese and Japanese text. |
 
 A run these rules keep together (a bracket and its first character, "[T]\u{a0}" and the letter
 after it) moves to the next row whole when it fits there, like the runs of the CJK rules; where
@@ -133,8 +142,8 @@ wider than the row), kinsoku often (a run it keeps together, in a narrow column)
 without Chinese or Japanese keep egui's behaviour.
 
 **Text without Chinese or Japanese characters lays out as with upstream egui, except for the
-two UAX #14 rules above** (no break after an ASCII opening bracket, none before a no-break
-space) **and the ellipses and doubled dashes below**: every other such pair gets `Upstream`, so
+three UAX #14 rules above** (no break after an ASCII opening bracket, none before a no-break
+space, none next to a word joiner) **and the ellipses and doubled dashes below**: every other such pair gets `Upstream`, so
 `RowBreakCandidates` behaves as before (the unit test `text_without_cjk_is_left_to_egui` checks
 over a million pairs of Latin, Greek, Cyrillic, Arabic, Hangul, punctuation, currency and emoji
 characters, and lists the exceptions; `text_without_the_rules_characters_keeps_its_rows`
@@ -181,17 +190,18 @@ common pairs (two characters below U+2000, a Han character or kana after one) wi
 full rules, and nothing allocates. A whole `epaint::text::layout` call (release build, warm
 glyph cache, 400 pt wide, Apple M4 Max) takes about 5 % longer than with upstream epaint for
 40 kB of English or Latin and Cyrillic text and 8–11 % for 20,000 characters of Chinese or
-Japanese: 0.1–0.2 ms more. Text that doesn't wrap costs the same. The two UAX #14 rules add nothing measurable to
+Japanese: 0.1–0.2 ms more. Text that doesn't wrap costs the same. The first two UAX #14 rules add nothing measurable to
 that (one comparison per position in the shortcut; re-measured against the patch without them:
-within ±2 %, and 4–6 % over upstream for 40 kB of English). egui caches laid-out text,
+within ±2 %, and 4–6 % over upstream for 40 kB of English); the word joiner's adds two
+comparisons to the full rules only (the shortcut never sees U+2060), and was not measured. egui caches laid-out text,
 so this is paid only when a text or its width changes.
 
 ### Tests
 
 * `epaint/src/text/kinsoku.rs` unit tests (in the vendored crate; CI runs them): every class
   and rule, egui's list included, the UAX #14 rules (character pairs; paragraphs with nested,
-  adjacent and spaced brackets at every width; a company tag and its name at every width; the
-  typographic quotes untouched), Latin words and numbers, Chinese and straight quotes, spaces
+  adjacent and spaced brackets at every width; a company tag and its name at every width; a
+  clan tag glued with word joiners at every width; the typographic quotes untouched), Latin words and numbers, Chinese and straight quotes, spaces
   next to brackets (pairs, and paragraphs at every width), the million-pair "no CJK, no change"
   check, German quotes at every width, runs of prohibited marks, a word wider than the row,
   rows that never overflow (also after a first-row indentation, where only the first row may
@@ -205,7 +215,9 @@ so this is paid only when a text or its width changes.
   as in the SpaceCorps chat) at every width from 140 to 600 pt: the tag's row holds the start of
   the name, no row starts with the no-break space, "[T]\u{a0}nova:" stays whole, and no row ends
   with an opening bracket, in messages with brackets of every kind and in tokens wider than a
-  row (a link, a formula). It fails without either rule (upstream fails it at most widths).
+  row (a link, a formula); and a clan tag glued with word joiners, "[T]\u{a0}[A-\u{2060}B]\u{a0}nova:",
+  is never split (2566 of 9681 layouts were without the joiner rule). It fails without any of
+  the three rules (upstream fails it at most widths).
 * `crates/space3d-ui/tests/kinsoku.rs`: Japanese, Traditional and Simplified Chinese paragraphs
   (and one with spaces around brackets) with a CJK test font (a Noto Sans JP subset,
   `crates/space3d-ui/tests/fonts/`) at three sizes and every fourth width, checked against the

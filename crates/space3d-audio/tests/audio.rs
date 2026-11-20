@@ -195,3 +195,52 @@ fn mock_backend_plays_stops_and_cleans_up() {
     assert_eq!(audio.backend_emitter_tracks(), 0);
     assert_eq!(audio.emitter_count(), 0);
 }
+
+/// In the background everything that plays is paused, and comes back; a sound the game had
+/// paused itself stays paused. The plugin's hook does it (`space3d_core::BackgroundHooks`).
+#[test]
+fn the_background_pauses_what_plays_and_the_return_resumes_it() {
+    let mut app = App::new();
+    app.add_plugin(AudioPlugin::mock());
+    if app.resources.expect::<Audio>().mode() != AudioMode::Mock {
+        eprintln!("kira mock backend unavailable; skipping");
+        return;
+    }
+    // Looping: the mock renders minutes with every pump.
+    let s = beep();
+    let looping = |bus| PlayParams {
+        bus,
+        looping: true,
+        ..Default::default()
+    };
+    let audio = app.resources.expect_mut::<Audio>();
+    let master = audio.play(&s, looping(Bus::Master));
+    let own = audio.play(&s, looping(Bus::Sfx));
+    audio.pause(own, Fade::IMMEDIATE);
+    for _ in 0..4 {
+        audio.pump_mock();
+    }
+    assert_eq!(audio.sound_state(master), Some(PlaybackState::Playing));
+    assert_eq!(audio.sound_state(own), Some(PlaybackState::Paused));
+
+    space3d_core::BackgroundHooks::run(&mut app.resources, true);
+    let audio = app.resources.expect_mut::<Audio>();
+    assert!(audio.in_background());
+    for _ in 0..8 {
+        audio.pump_mock();
+    }
+    assert_eq!(audio.sound_state(master), Some(PlaybackState::Paused));
+
+    space3d_core::BackgroundHooks::run(&mut app.resources, false);
+    let audio = app.resources.expect_mut::<Audio>();
+    assert!(!audio.in_background());
+    for _ in 0..8 {
+        audio.pump_mock();
+    }
+    assert_eq!(audio.sound_state(master), Some(PlaybackState::Playing));
+    assert_eq!(
+        audio.sound_state(own),
+        Some(PlaybackState::Paused),
+        "the game's own pause is kept"
+    );
+}

@@ -1,0 +1,44 @@
+# hello_cube packaged for phones: the engine's own proof that its Android and iOS entry works.
+#
+#   cargo apk build -p hello_cube_mobile --lib --target x86_64-linux-android    # emulator on a PC
+#   cargo apk build -p hello_cube_mobile --lib --target aarch64-linux-android   # a phone
+#   cargo build -p hello_cube_mobile --lib --target aarch64-apple-ios-sim       # staticlib for Xcode
+#
+# See docs/MOBILE.md for the tools these need.
+[package]
+name = "hello_cube_mobile"
+description = "Space3d example: hello_cube as an Android cdylib / iOS staticlib"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lib]
+path = "src/lib.rs"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+space3d.workspace = true
+hello_cube = { path = "../hello_cube" }
+
+[package.metadata.android]
+package = "org.spacecorps.space3d.hellocube"
+apk_name = "hello_cube"
+build_targets = ["aarch64-linux-android", "x86_64-linux-android"]
+assets = "assets"
+# The library without its debug info (a debug build's is over 600 MB).
+strip = "strip"
+
+[package.metadata.android.sdk]
+min_sdk_version = 28
+target_sdk_version = 36
+
+[package.metadata.android.application]
+label = "Space3d hello cube"
+
+[package.metadata.android.application.activity]
+orientation = "landscape"
+config_changes = "orientation|screenSize|smallestScreenSize|screenLayout|keyboardHidden|keyboard|navigation|touchscreen|density|uiMode|locale|layoutDirection|fontScale"
+
+[[package.metadata.android.uses_permission]]
+name = "android.permission.INTERNET"

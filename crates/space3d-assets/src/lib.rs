@@ -70,6 +70,8 @@ pub use model::{
 pub use par::PAR_ROW_THRESHOLD;
 pub use path::AssetPath;
 pub use server::{AssetServer, LoadState};
+#[cfg(target_os = "android")]
+pub use source::{AndroidAssetSource, set_android_asset_manager};
 pub use source::{AssetSource, BoxedFuture, FileSource, HttpSource, MemorySource, default_source};
 
 use space3d_core::{App, Events, ImageData, MeshData, Plugin, Stage, SystemCtx};
@@ -101,7 +103,11 @@ impl Default for AssetsPlugin {
     fn default() -> Self {
         Self {
             root: "assets".into(),
-            hot_reload: cfg!(all(feature = "hot-reload", not(target_arch = "wasm32"))),
+            // A phone has no asset folder to watch (an APK's assets are zip entries).
+            hot_reload: cfg!(all(
+                feature = "hot-reload",
+                not(any(target_arch = "wasm32", target_os = "android", target_os = "ios"))
+            )),
         }
     }
 }

@@ -111,6 +111,40 @@ impl Backend {
         self.emitters.len()
     }
 
+    /// Pause everything that plays (`true`) or resume what this paused (`false`): the two
+    /// buses, every emitter's track and the sounds on the master bus. `paused` is the list
+    /// of sounds this paused itself; a sound the game had paused stays paused.
+    pub fn set_background(&mut self, background: bool, paused: &mut Vec<SoundId>) {
+        let t = Tween {
+            duration: std::time::Duration::from_millis(30),
+            ..Default::default()
+        };
+        if background {
+            self.music.pause(t);
+            self.sfx.pause(t);
+            for e in self.emitters.values_mut() {
+                e.handle.pause(t);
+            }
+            for (id, h) in &mut self.sounds {
+                if h.state() == PlaybackState::Playing {
+                    h.pause(t);
+                    paused.push(*id);
+                }
+            }
+        } else {
+            self.music.resume(t);
+            self.sfx.resume(t);
+            for e in self.emitters.values_mut() {
+                e.handle.resume(t);
+            }
+            for id in paused.drain(..) {
+                if let Some(h) = self.sounds.get_mut(&id) {
+                    h.resume(t);
+                }
+            }
+        }
+    }
+
     /// Forget handles of sounds that finished.
     pub fn collect_finished(&mut self) {
         self.sounds.retain(|_, h| h.state() != PlaybackState::Stopped);

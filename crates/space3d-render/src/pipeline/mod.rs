@@ -23,11 +23,12 @@ pub(crate) const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth3
 pub(crate) const OFFSCREEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
 
 /// Views whose frustums one culling dispatch can read: the `frusta` uniform of cull.wgsl
-/// (`CULL_VIEWS * 96` bytes = 6 KiB, a multiple of every allowed uniform offset alignment).
+/// (`CULL_VIEWS * 112` bytes = 7 KiB, a multiple of every allowed uniform offset alignment).
 pub(crate) const CULL_VIEWS: usize = 64;
 
-/// Frustum planes of one view (`frusta` in cull.wgsl: 6 × `vec4<f32>` per view).
-pub(crate) type GpuFrustum = [[f32; 4]; 6];
+/// Frustum of one view (`frusta` in cull.wgsl: 7 × `vec4<f32>` per view): the six planes, then
+/// `Frustum::small` (a point and the ratio under which a sphere is too small to draw).
+pub(crate) type GpuFrustum = [[f32; 4]; 7];
 
 /// Matches `CullParams` in cull.wgsl.
 #[repr(C)]
@@ -1240,7 +1241,7 @@ mod tests {
         assert_eq!(std::mem::size_of::<GpuView>(), 1376);
         assert_eq!(std::mem::size_of::<GpuMaterial>(), 112);
         assert_eq!(std::mem::size_of::<GpuCullParams>(), 32);
-        assert_eq!(std::mem::size_of::<GpuFrustum>(), 96);
+        assert_eq!(std::mem::size_of::<GpuFrustum>(), 112);
         // Dynamic offsets of the `frusta` window must be aligned (256 at most in WebGPU).
         assert!((CULL_VIEWS * std::mem::size_of::<GpuFrustum>()).is_multiple_of(256));
         assert_eq!(std::mem::size_of::<GpuCompactParams>(), 16);

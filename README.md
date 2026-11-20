@@ -337,5 +337,9 @@ cargo test --workspace
 Licensed under the [Apache License, Version 2.0](LICENSE). See [NOTICE](NOTICE) for the
 copyright line and the third-party code kept in this repository.
 
+This covers the whole history: earlier revisions and other branches, some of which still carry
+the proprietary licence text from before the source was published, are offered under the
+Apache License 2.0 as well.
+
 Unless you say otherwise, any contribution you submit for inclusion in Space3d is licensed
 under the same terms, without additional conditions.

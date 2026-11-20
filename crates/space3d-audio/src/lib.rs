@@ -140,6 +140,9 @@ pub struct Audio {
     ignored_calls: u64,
     listener: Option<ListenerPose>,
     emitters: BTreeSet<Entity>,
+    /// In the background ([`Audio::set_background`]), and the sounds it paused for that.
+    background: bool,
+    background_paused: Vec<SoundId>,
 }
 
 impl Audio {
@@ -174,6 +177,8 @@ impl Audio {
             ignored_calls: 0,
             listener: None,
             emitters: BTreeSet::new(),
+            background: false,
+            background_paused: Vec::new(),
         }
     }
 
@@ -191,6 +196,8 @@ impl Audio {
                     ignored_calls: 0,
                     listener: None,
                     emitters: BTreeSet::new(),
+                    background: false,
+                    background_paused: Vec::new(),
                 }
             }
             Err(err) => Self::disabled(format!("no audio output available: {err}")),
@@ -305,6 +312,29 @@ impl Audio {
     pub fn resume(&mut self, id: SoundId, fade: impl Into<Fade>) {
         let t = fade.into().tween();
         self.with_sound(id, |h| h.resume(t));
+    }
+
+    /// The app goes to the background (`true`: everything that plays is paused) or comes back
+    /// (`false`: what that paused plays on). [`AudioPlugin`] does this on a phone through
+    /// `space3d_core::BackgroundHooks`: the sound has its own thread and would play on while
+    /// the game stands still. A sound the game paused itself stays paused.
+    pub fn set_background(&mut self, background: bool) {
+        if self.background == background {
+            return;
+        }
+        self.background = background;
+        let mut paused = std::mem::take(&mut self.background_paused);
+        if let Some(m) = self.backend.as_mut() {
+            m.get_mut()
+                .unwrap_or_else(|p| p.into_inner())
+                .set_background(background, &mut paused);
+        }
+        self.background_paused = paused;
+    }
+
+    /// Whether [`Audio::set_background`] has everything paused.
+    pub fn in_background(&self) -> bool {
+        self.background
     }
 
     /// Tween a sound's linear volume.
@@ -473,6 +503,14 @@ impl Plugin for AudioPlugin {
     fn build(&self, app: &mut App) {
         let settings = self.settings.with_env_override();
         app.insert_resource(Audio::new(&settings));
+        // A phone app in the background stands still, the sound's thread does not.
+        app.resources
+            .init::<space3d_core::BackgroundHooks>()
+            .add(|resources, background| {
+                if let Some(audio) = resources.get_mut::<Audio>() {
+                    audio.set_background(background);
+                }
+            });
         app.add_system_named(Stage::PostUpdate, "audio::sync", sync_audio);
     }
 }

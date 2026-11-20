@@ -460,6 +460,11 @@ enum PumpEnd {
 
 const CLOSED_BY_CLIENT: &str = "closed by client";
 
+/// The web: unread events a connection keeps before it is dropped (see [`Driver::pump`]); at a
+/// game's 20 to 30 messages a second, about half a minute of a hidden tab.
+#[cfg(target_arch = "wasm32")]
+const WEB_MAX_UNREAD: usize = 1024;
+
 /// Background state machine shared by native and web: connect, pump, reconnect.
 struct Driver {
     url: String,
@@ -573,7 +578,18 @@ impl Driver {
                         return PumpEnd::Lost(e);
                     }
                 }
-                Step::Incoming(Incoming::Message(m)) => self.emit(WsEventKind::Message(m)),
+                Step::Incoming(Incoming::Message(m)) => {
+                    // The web: a hidden tab stops the frames that read the events, while the
+                    // socket's callbacks keep filling them. Past a cap the connection is dropped
+                    // (the game reconnects when it reads again) instead of growing without end.
+                    #[cfg(target_arch = "wasm32")]
+                    if self.events.len() >= WEB_MAX_UNREAD {
+                        return PumpEnd::Lost(format!(
+                            "{WEB_MAX_UNREAD} messages unread (the page stopped reading: a hidden tab?)"
+                        ));
+                    }
+                    self.emit(WsEventKind::Message(m))
+                }
                 Step::Incoming(Incoming::Closed(reason)) => return PumpEnd::Lost(reason),
             }
         }

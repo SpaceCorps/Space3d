@@ -464,6 +464,9 @@ pub fn inspector_ui(
         r |= property(ui, "Temperature", |ui| {
             fill_slider(ui, egui::Slider::new(&mut p.color_grading.temperature, -1.0..=1.0))
         });
+        r |= property(ui, "Display gamma", |ui| {
+            fill_slider(ui, egui::Slider::new(&mut p.display_gamma, 0.5..=2.0))
+        });
         r |= property(ui, "Dither", |ui| ui.checkbox(&mut p.dither, ""));
         if p.color_grading.lut.is_some() {
             property(ui, "LUT", |ui| {

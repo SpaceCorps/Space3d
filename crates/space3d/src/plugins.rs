@@ -34,7 +34,13 @@ pub struct LogPlugin {
 impl Default for LogPlugin {
     fn default() -> Self {
         Self {
-            filter: "info,wgpu_core=warn,wgpu_hal=warn,naga=warn".into(),
+            // winit's iOS loop logs two lines of its own in every frame (a warning for its own
+            // `AboutToWait`, an info for every redraw): never useful, and megabytes a minute.
+            filter: if cfg!(target_os = "ios") {
+                "info,wgpu_core=warn,wgpu_hal=warn,naga=warn,winit::platform_impl::ios::app_state=error".into()
+            } else {
+                "info,wgpu_core=warn,wgpu_hal=warn,naga=warn".into()
+            },
         }
     }
 }

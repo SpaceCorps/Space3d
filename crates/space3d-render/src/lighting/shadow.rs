@@ -276,6 +276,29 @@ fn fit_camera(cameras: &[ViewInfo], camera: Option<Entity>) -> Option<&ViewInfo>
     }
 }
 
+/// `Frustum::small` of the shadow view of `shadow` (`DirectionalShadow::min_caster_pixels`):
+/// the eye of the camera the map follows and the radius ÷ distance that is that many pixels
+/// on its screen. Zero (no test) without a size, such a camera, or with an orthographic one.
+pub(crate) fn small_casters(shadow: &DirectionalShadow, cameras: &[ViewInfo]) -> Vec4 {
+    let pixels = shadow.min_caster_pixels;
+    if pixels.is_nan() || pixels <= 0.0 {
+        return Vec4::ZERO;
+    }
+    let camera = match shadow.fit {
+        ShadowFit::Camera { camera, .. } => camera,
+        ShadowFit::Bounds(_) => None,
+    };
+    let Some(view) = fit_camera(cameras, camera).filter(|v| !v.orthographic) else {
+        return Vec4::ZERO;
+    };
+    // Pixels of a sphere = radius × this ÷ distance (`lod::select_lods`).
+    let scale = view.viewport[3] as f32 * 0.5 * view.proj.y_axis.y.abs();
+    if scale <= 0.0 || !scale.is_finite() {
+        return Vec4::ZERO;
+    }
+    view.camera_pos.extend(pixels / scale)
+}
+
 /// The points a shadow map must cover (graphics spec §2.2.9 `ShadowFit`); `false` when there
 /// is nothing to fit (no such camera, an empty box).
 pub(crate) fn fit_points(fit: &ShadowFit, cameras: &[ViewInfo], points: &mut Points) -> bool {
@@ -505,6 +528,27 @@ mod tests {
             tonemapper: Tonemapper::None,
             view_offset: 0,
         }
+    }
+
+    /// `min_caster_pixels` becomes the camera's eye and a radius ÷ distance: 10 px on a 720-high
+    /// view of 60° is 10 ÷ (360 ÷ tan 30°); nothing without a size or under an orthographic
+    /// camera.
+    #[test]
+    fn small_casters_are_sized_on_the_fitted_camera() {
+        let eye = Vec3::new(0.0, 50.0, 0.0);
+        let cameras = [camera(eye, Vec3::ZERO, 60.0, 16.0 / 9.0, 0.1, 500.0)];
+        let shadow = DirectionalShadow::new().with_min_caster_pixels(10.0);
+        let small = small_casters(&shadow, &cameras);
+        assert_eq!(small.truncate(), eye);
+        let ratio = 10.0 / (360.0 / 30f32.to_radians().tan());
+        assert!((small.w - ratio).abs() < 1e-6, "{} vs {ratio}", small.w);
+        assert_eq!(small_casters(&DirectionalShadow::new(), &cameras), Vec4::ZERO);
+        assert_eq!(small_casters(&shadow, &[]), Vec4::ZERO);
+        let flat = ViewInfo {
+            orthographic: true,
+            ..cameras[0]
+        };
+        assert_eq!(small_casters(&shadow, &[flat]), Vec4::ZERO);
     }
 
     fn light(direction: Vec3, fit: ShadowFit) -> CastingLight {

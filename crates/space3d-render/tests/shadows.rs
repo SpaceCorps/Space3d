@@ -214,6 +214,69 @@ fn offscreen_caster_still_casts() {
     }
 }
 
+/// `DirectionalShadow::min_caster_pixels`: under a perspective camera a caster whose bounding
+/// sphere is smaller on screen than that casts no shadow, a larger one still does, and 0 keeps
+/// both — on every draw path (the CPU's frustum test and the GPU culling's).
+#[test]
+fn casters_under_the_pixel_size_cast_no_shadow() {
+    let Some(app) = app_with(1) else { return };
+    let best = best_path(&app);
+    drop(app);
+    for path in paths_up_to(best) {
+        let scene = |min_pixels: f32| {
+            let mut app = app_with(1).unwrap();
+            set_path(&mut app, path);
+            // The ground 20 units below the eye fills the same 8 units as the other scenes:
+            // 160 px per unit of radius ÷ distance.
+            app.world.spawn((
+                Transform::from_xyz(0.0, 20.0, 0.0).looking_at(Vec3::ZERO, Vec3::NEG_Z),
+                Camera3d::default()
+                    .with_clear_color(Vec4::new(0.0, 0.0, 0.0, 1.0))
+                    .with_projection(Projection::Perspective {
+                        fov_y: 2.0 * (VIEW * 0.5 / 20.0).atan(),
+                        near: 0.1,
+                        far: 40.0,
+                    }),
+            ));
+            app.insert_resource(AmbientLight {
+                color: Vec3::ONE,
+                intensity: 0.1,
+            });
+            let assets = app.resources.expect_mut::<RenderAssets>();
+            let plane = assets.add_mesh(MeshData::plane(16.0));
+            let cube = assets.add_mesh(MeshData::cube(1.0));
+            app.world.spawn((Transform::IDENTITY, Mesh3d(plane), grey()));
+            // About 7 px of radius: shadows the ground around (0, 0).
+            app.world
+                .spawn((Transform::from_xyz(1.5, 1.0, 0.0), Mesh3d(cube), grey()));
+            // About 3 px: shadows the ground around (0.5, 2.5).
+            app.world.spawn((
+                Transform::from_xyz(1.5, 1.0, 2.5).with_scale(Vec3::splat(0.4)),
+                Mesh3d(cube),
+                grey(),
+            ));
+            sun(&mut app, SUN, Some(shadow().with_min_caster_pixels(min_pixels)));
+            render(&mut app)
+        };
+        let all = scene(0.0);
+        assert_shadowed(&all, (0.0, 0.0), (-2.5, -2.5), &format!("{path:?}: the large cube"));
+        assert_shadowed(&all, (0.5, 2.5), (-2.5, -2.5), &format!("{path:?}: the small cube"));
+        let cut = scene(5.0);
+        assert_shadowed(
+            &cut,
+            (0.0, 0.0),
+            (-2.5, -2.5),
+            &format!("{path:?}: the large cube, cut at 5 px"),
+        );
+        assert_lit(
+            &cut,
+            (0.5, 2.5),
+            (-2.5, -2.5),
+            &format!("{path:?}: the small cube, cut at 5 px"),
+        );
+    }
+}
+
 /// A light at 45° and at 80° from the vertical over a flat ground: with the default biases no
 /// texel of the ground shadows itself (no acne) for any filter, with a fine and a coarse map,
 /// while a cube still casts its shadow.

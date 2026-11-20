@@ -27,8 +27,9 @@ Rust cross-platform game engine (desktop, web/wasm, Android, iOS). Cargo workspa
 8. `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`
    must pass.
 9. **Patched crates live in `third_party/`** (`[patch.crates-io]`, not workspace members):
-   `epaint` carries kinsoku line breaking for Chinese and Japanese and two UAX #14 rules for all
-   scripts (no break before U+00A0, none after an ASCII opening bracket). After an egui bump run
+   `epaint` carries kinsoku line breaking for Chinese and Japanese and three UAX #14 rules for all
+   scripts (no break before U+00A0, none after an ASCII opening bracket, none next to a word
+   joiner U+2060). After an egui bump run
    `python3 scripts/update-epaint.py`; after editing `third_party/epaint`, `--refresh` the patch
    (`third_party/README.md`).
 

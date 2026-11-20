@@ -472,7 +472,10 @@ impl Lighting {
             self.depth_views.push(DepthViewRequest {
                 light: light.entity,
                 view_proj: fitted.view_proj,
-                frustum: Frustum::from_view_proj(&fitted.view_proj),
+                frustum: Frustum {
+                    small: shadow::small_casters(&light.shadow, cameras),
+                    ..Frustum::from_view_proj(&fitted.view_proj)
+                },
                 target: map.view.clone(),
                 size: map.size,
                 bias: wgpu::DepthBiasState {

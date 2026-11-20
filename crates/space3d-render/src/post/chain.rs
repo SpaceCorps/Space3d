@@ -27,6 +27,10 @@ pub(crate) mod bits {
     pub const SCENE_ALPHA: u32 = 1024;
     pub const EXACT: u32 = 2048;
     pub const GRADE_LDR: u32 = 4096;
+    /// Bloom level 0 is read with one bilinear tap (`Bloom::fast`).
+    pub const BLOOM_BILINEAR: u32 = 8192;
+    /// The display gamma is not 1 (`PostProcess::display_gamma`).
+    pub const DISPLAY_GAMMA: u32 = 16384;
 }
 
 /// Matches `PostParams` in composite.wgsl: one 256-byte uniform slot per post group. Nothing in
@@ -42,8 +46,8 @@ pub(crate) struct GpuPost {
     pub src_rect: [f32; 4],
     /// 1/S.w, 1/S.h, rect aspect (w/h), D height in pixels.
     pub src_texel: [f32; 4],
-    /// Linear exposure multiplier (the compensation with auto exposure), -, bloom intensity,
-    /// bloom mode (0 additive, 1 energy).
+    /// Linear exposure multiplier (the compensation with auto exposure), 1 / display gamma,
+    /// bloom intensity, bloom mode (0 additive, 1 energy).
     pub exposure: [f32; 4],
     pub vignette: [f32; 4],
     pub vignette_color: [f32; 4],
@@ -70,6 +74,22 @@ pub(crate) fn dither_seed(frame: u64) -> u32 {
 
 /// Second dither hash seed (`s3d_hash01(px, seed) − s3d_hash01(px, seed ^ DITHER_SECOND)`).
 const DITHER_SECOND: u32 = 0x68E3_1DA4;
+
+/// XORed into both pre-hashed dither seeds for the dither of the LDR intermediate before FXAA
+/// (`S3D_POST_DITHER_L` in composite.wgsl), so it is independent of the last pass's.
+#[cfg(test)]
+const DITHER_INTERMEDIATE: u32 = 0xA511_E9B3;
+
+/// CPU mirror of the composite's dither noise at pixel `px` of frame `frame`, in LSB (−1..1,
+/// triangular): the last pass's (`post_finish`), or the LDR intermediate's before FXAA
+/// (`post_dither_intermediate`).
+#[cfg(test)]
+pub(crate) fn dither_noise(px: [u32; 2], frame: u64, intermediate: bool) -> f32 {
+    let x = if intermediate { DITHER_INTERMEDIATE } else { 0 };
+    let hash = |hashed: u32| pcg(px[0] ^ pcg(px[1] ^ hashed)) as f32 * (1.0 / 4_294_967_295.0);
+    let seed = dither_seed(frame);
+    hash(pcg(seed) ^ x) - hash(pcg(seed ^ DITHER_SECOND) ^ x)
+}
 
 /// Grain seed of frame `frame` (graphics spec §4.3) for a grain of `seed`: `animated ?
 /// pcg(seed ^ frame) : seed`.
@@ -147,9 +167,21 @@ impl GpuPost {
         p.out_rect = out;
         p.src_rect = src;
         p.src_texel = [1.0 / sw, 1.0 / sh, out[2] / out[3].max(1.0), plan.output_size.1 as f32];
-        p.exposure = [exposure, 0.0, 0.0, 0.0];
+        // The display gamma: a uniform bit, so moving it never builds a pipeline; 1 leaves the
+        // composite exactly as it was (the passthrough group copies, and gets none).
+        let display_gamma = crate::output::display_gamma_of(s.display_gamma);
+        let inverse_display_gamma = if effects && display_gamma != 1.0 {
+            flags |= bits::DISPLAY_GAMMA;
+            1.0 / display_gamma
+        } else {
+            1.0
+        };
+        p.exposure = [exposure, inverse_display_gamma, 0.0, 0.0];
         if bloom {
             flags |= bits::BLOOM;
+            if s.bloom.fast {
+                flags |= bits::BLOOM_BILINEAR;
+            }
             let energy = s.bloom.composite == BloomComposite::EnergyConserving;
             p.exposure[2] = if energy {
                 s.bloom.intensity.clamp(0.0, 1.0)
@@ -339,6 +371,7 @@ mod tests {
         assert_eq!(offset("frame"), std::mem::offset_of!(GpuPost, frame));
         for (name, bit) in [
             ("S3D_POST_BLOOM", bits::BLOOM),
+            ("S3D_POST_BLOOM_BILINEAR", bits::BLOOM_BILINEAR),
             ("S3D_POST_AUTO_EXPOSURE", bits::AUTO_EXPOSURE),
             ("S3D_POST_GRADE", bits::GRADE),
             ("S3D_POST_GRADE_LDR", bits::GRADE_LDR),
@@ -351,10 +384,66 @@ mod tests {
             ("S3D_POST_VIGNETTE", bits::VIGNETTE),
             ("S3D_POST_CA", bits::CA),
             ("S3D_POST_GRAIN", bits::GRAIN),
+            ("S3D_POST_DISPLAY_GAMMA", bits::DISPLAY_GAMMA),
         ] {
             assert!(src.contains(&format!("const {name}: u32 = {bit}u;")), "{name}");
         }
         crate::pipeline::validate_wgsl(&src).unwrap_or_else(|e| panic!("{e}"));
+    }
+
+    /// The display gamma is a uniform bit and `1 / gamma`: at 1 (the default), with NaN, and
+    /// in the passthrough group the composite's parameters are exactly those without it.
+    #[test]
+    fn display_gamma_is_off_at_one() {
+        use super::super::api::PostProcess;
+        let plan = |settings: PostProcess, passthrough: bool| PostGroupPlan {
+            camera: space3d_core::World::new().spawn(()),
+            settings,
+            mode: FrameMode::Hdr,
+            scene_rect: [0, 0, 64, 64],
+            output_rect: [0, 0, 64, 64],
+            scene_size: (64, 64),
+            output_size: (64, 64),
+            scene_alpha: true,
+            transparent: false,
+            passthrough,
+            distortion: false,
+        };
+        let c = || CompositePlan {
+            bloom: true,
+            fxaa: false,
+            auto_exposure: false,
+            lut: None,
+        };
+        let params = |gamma: f32, passthrough: bool| {
+            GpuPost::new(
+                &plan(PostProcess::default().with_display_gamma(gamma), passthrough),
+                c(),
+            )
+        };
+        let plain = GpuPost::new(&plan(PostProcess::default(), false), c());
+        assert_eq!(PostProcess::default().display_gamma, 1.0);
+        assert_eq!((plain.flags[0] & bits::DISPLAY_GAMMA, plain.exposure[1]), (0, 1.0));
+        assert_eq!(params(1.0, false), plain);
+        assert_eq!(params(f32::NAN, false), plain);
+        assert_eq!(params(f32::INFINITY, false), plain);
+        let moved = params(1.25, false);
+        assert_eq!(
+            (moved.flags[0] & bits::DISPLAY_GAMMA, moved.exposure[1]),
+            (bits::DISPLAY_GAMMA, 0.8)
+        );
+        // Nothing else moves: the exposure, the bloom and the grading are as they were.
+        let mut same = moved;
+        same.flags[0] &= !bits::DISPLAY_GAMMA;
+        same.exposure[1] = 1.0;
+        assert_eq!(same, plain);
+        // Clamped to the range; the passthrough group copies and gets none.
+        assert_eq!(
+            (params(100.0, false).exposure[1], params(0.0, false).exposure[1]),
+            (0.25, 4.0)
+        );
+        assert_eq!(params(1.25, true).flags[0] & bits::DISPLAY_GAMMA, 0);
+        assert_eq!(params(1.25, true).exposure[1], 1.0);
     }
 
     /// The shader hashes pre-hashed seeds (`post_hash01(p, pcg(seed))`): the same numbers as
@@ -378,6 +467,55 @@ mod tests {
         };
         assert_eq!(seed(&animated, 7), pcg(42 ^ 7));
         assert_ne!(seed(&animated, 7), seed(&animated, 8));
+    }
+
+    /// The LDR intermediate before FXAA is dithered (it is 8-bit: without the dither it holds
+    /// the bands, and the last pass's dither only adds noise to them). A ramp over 8 codes
+    /// (1 to 9: at black the clamp keeps the noise's upper half only, as in the last pass),
+    /// 1024 px wide: quantized as it is, the mean of a 16-px column block is up to half a code
+    /// off; with the composite's dither it is the ramp's own value within 0.1 codes. The noise
+    /// is triangular (zero mean, variance 1/6 LSB²) and independent of the last pass's.
+    #[test]
+    fn intermediate_dither_removes_the_bands() {
+        const W: u32 = 1024;
+        const H: u32 = 64;
+        let value = |x: u32| 1.0 + 8.0 * (x as f32 + 0.5) / W as f32;
+        let worst = |dither: bool| {
+            let mut worst = 0.0f32;
+            for block in 0..W / 16 {
+                let (mut sum, mut want) = (0.0f64, 0.0f64);
+                for x in block * 16..block * 16 + 16 {
+                    for y in 0..H {
+                        let n = if dither { dither_noise([x, y], 3, true) } else { 0.0 };
+                        sum += f64::from((value(x) + n).round().clamp(0.0, 255.0));
+                        want += f64::from(value(x));
+                    }
+                }
+                worst = worst.max(((sum - want) / f64::from(16 * H)).abs() as f32);
+            }
+            worst
+        };
+        let (banded, dithered) = (worst(false), worst(true));
+        eprintln!("worst 16-px block mean error: {banded:.3} LSB quantized, {dithered:.3} LSB dithered");
+        assert!(banded > 0.4, "{banded}");
+        assert!(dithered < 0.1, "{dithered}");
+        let (mut sum, mut sq, mut cross) = (0.0f64, 0.0f64, 0.0f64);
+        let n = f64::from(W * H);
+        for x in 0..W {
+            for y in 0..H {
+                let a = f64::from(dither_noise([x, y], 3, true));
+                let b = f64::from(dither_noise([x, y], 3, false));
+                assert!(a.abs() <= 1.0);
+                sum += a;
+                sq += a * a;
+                cross += a * b;
+            }
+        }
+        assert!((sum / n).abs() < 0.01, "mean {}", sum / n);
+        assert!((sq / n - 1.0 / 6.0).abs() < 0.01, "variance {}", sq / n);
+        assert!((cross / n).abs() < 0.01, "correlation with the last pass {}", cross / n);
+        let wgsl = super::super::COMPOSITE_WGSL;
+        assert!(wgsl.contains(&format!("S3D_POST_DITHER_L: u32 = 0x{DITHER_INTERMEDIATE:X}u")));
     }
 
     /// A group's window seeds are the spec's per-frame seeds (§4.3), pre-hashed, for any frame.

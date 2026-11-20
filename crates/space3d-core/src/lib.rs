@@ -11,6 +11,7 @@
 //! 7. `Last` — event buffer swap, cleanup
 
 pub mod app;
+pub mod background;
 pub mod data;
 pub mod events;
 pub mod resources;
@@ -19,6 +20,7 @@ pub mod time;
 pub mod transform;
 
 pub use app::{App, AppExit, ENV_HEADLESS_UNPACED, HeadlessPacing, Pacer, Plugin};
+pub use background::BackgroundHooks;
 pub use data::{HdrImageData, ImageData, MeshData};
 pub use events::{EventReader, Events};
 pub use resources::Resources;

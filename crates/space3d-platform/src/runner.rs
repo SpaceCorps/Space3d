@@ -56,6 +56,32 @@ pub(crate) struct WinitRunner {
     surface_retry: SurfaceRetry,
     layout_watch: LayoutWatch,
     buttons: ButtonReconciler,
+    /// The pads of the OS (`crate::gamepad`), polled before every frame.
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    pads: crate::gamepad::Backend,
+    /// Android: pads by the input device their key and motion events name.
+    #[cfg(target_os = "android")]
+    pads: crate::gamepad::AndroidPads<DeviceId>,
+    /// Android: when the OS was last asked for its gamepads.
+    #[cfg(target_os = "android")]
+    pads_asked: Option<Instant>,
+    /// Whether the on-screen keyboard was last asked for (`TextInput`, phones).
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    keyboard_shown: bool,
+    /// Frames until the on-screen keyboard is asked for again (a finger lifted; see `Touch`).
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    keyboard_again: u8,
+    /// Where each finger on the screen went down, any of which may bring the keyboard back
+    /// (`Touch`): one slot per finger, so a second finger does not lose the first one's tap.
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    touch_down: Vec<(u64, Vec2)>,
+    /// Android: frames since the keyboard's height was asked (`KeyboardInset`).
+    #[cfg(target_os = "android")]
+    keyboard_asked: u32,
+    /// Android: the window's insets as Java gave them last, the window size they were asked
+    /// for and the frames since.
+    #[cfg(target_os = "android")]
+    insets: (Option<crate::window::SafeArea>, (u32, u32), u32),
     #[cfg(target_arch = "wasm32")]
     pending: std::rc::Rc<std::cell::RefCell<Option<Result<Renderer, space3d_render::RenderError>>>>,
 }
@@ -136,10 +162,34 @@ fn attach_surface(r: &mut Renderer, window: &Arc<Window>) -> Result<(), RenderEr
         Some(c) => r.set_surface(space3d_render::wgpu::SurfaceTarget::Canvas(c))?,
         None => return Err(RenderError::Surface("window has no canvas".into())),
     }
-    let size = window.inner_size();
+    let size = drawable_size(window);
     r.resize(size.width.max(1), size.height.max(1));
     Ok(())
 }
+
+/// The size of what the window draws to, in physical pixels. winit's `inner_size` everywhere
+/// but iOS: there it is the safe area only (the screen without the notch and the home bar),
+/// while the Metal layer and the touches cover the whole screen, which `outer_size` is.
+fn drawable_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
+    #[cfg(target_os = "ios")]
+    {
+        window.outer_size()
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        window.inner_size()
+    }
+}
+
+/// How the loop runs while frames are drawn. `Poll` (a frame as soon as the last is done; the
+/// surface's vsync paces it) everywhere but iOS: there a redraw request becomes the view's
+/// `drawRect` at the display's pace, and `Poll` only spins the main run loop between two of
+/// them (seen in the Simulator: hundreds of thousands of empty turns a second).
+const FRAME_FLOW: ControlFlow = if cfg!(target_os = "ios") {
+    ControlFlow::Wait
+} else {
+    ControlFlow::Poll
+};
 
 /// Runner installed by [`WindowPlugin`]. Falls back to the headless runner when no event loop
 /// can be created (e.g. CI without a display server).
@@ -152,7 +202,10 @@ pub(crate) fn run(app: App, settings: WindowPlugin) {
             return;
         }
     };
-    event_loop.set_control_flow(ControlFlow::Poll);
+    event_loop.set_control_flow(FRAME_FLOW);
+    // iOS: the scene delegate's class must exist before UIKit starts (`crate::ios`).
+    #[cfg(target_os = "ios")]
+    crate::ios::register();
     let runner = WinitRunner {
         applied_title: settings.title.clone(),
         app,
@@ -167,6 +220,25 @@ pub(crate) fn run(app: App, settings: WindowPlugin) {
         surface_retry: SurfaceRetry::default(),
         layout_watch: LayoutWatch::default(),
         buttons: ButtonReconciler::default(),
+        #[cfg(any(
+            target_os = "windows",
+            target_os = "macos",
+            target_os = "linux",
+            target_os = "android"
+        ))]
+        pads: Default::default(),
+        #[cfg(target_os = "android")]
+        pads_asked: None,
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        keyboard_shown: false,
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        keyboard_again: 0,
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        touch_down: Vec::new(),
+        #[cfg(target_os = "android")]
+        keyboard_asked: 0,
+        #[cfg(target_os = "android")]
+        insets: (None, (0, 0), 0),
         #[cfg(target_arch = "wasm32")]
         pending: Default::default(),
     };
@@ -219,10 +291,25 @@ impl WinitRunner {
         #[allow(unused_mut)]
         let mut attrs = Window::default_attributes()
             .with_title(s.title.clone())
-            .with_inner_size(winit::dpi::LogicalSize::new(s.width as f64, s.height as f64))
             .with_resizable(s.resizable);
+        // iOS: the window is the screen. A size asked for makes a `UIWindow` of that size in
+        // points, which is not the screen's (seen: a 1280 x 720 window, a third of it off screen).
+        if !cfg!(target_os = "ios") {
+            attrs = attrs.with_inner_size(winit::dpi::LogicalSize::new(s.width as f64, s.height as f64));
+        }
         if crate::background::background_mode() {
             attrs = attrs.with_active(false);
+        }
+        // iOS: the status bar hidden and the home indicator faded until touched
+        // ([`crate::set_immersive`]).
+        #[cfg(target_os = "ios")]
+        if crate::mobile::immersive() {
+            use winit::platform::ios::{ScreenEdge, WindowAttributesExtIOS};
+            // (and the bottom edge's swipe home asks twice: the stick and the fire button sit on it)
+            attrs = attrs
+                .with_prefers_status_bar_hidden(true)
+                .with_prefers_home_indicator_hidden(true)
+                .with_preferred_screen_edges_deferring_system_gestures(ScreenEdge::BOTTOM);
         }
         if let Some(icon) = &s.icon {
             match winit::window::Icon::from_rgba(icon.rgba.clone(), icon.width, icon.height) {
@@ -272,7 +359,7 @@ impl WinitRunner {
         if self.renderer_requested {
             return;
         }
-        let size = window.inner_size();
+        let size = drawable_size(window);
         let size = UVec2::new(size.width, size.height).max(UVec2::ONE);
         self.renderer_requested = true;
         let config = self.renderer_config(size);
@@ -384,6 +471,22 @@ impl WinitRunner {
         let active = ButtonReconciler::active(self.state().focused, crate::background::background_mode());
         let input = self.app.resources.init::<Input>();
         self.buttons.frame(active, input, now, crate::os_buttons::query);
+        // What the pads did since the last frame (desktop; Android's come as window events).
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+        self.pads.poll(input, active);
+        // Android: winit says nothing of a pad that went away; Android is asked once a second.
+        #[cfg(target_os = "android")]
+        if self
+            .pads_asked
+            .is_none_or(|at| now.duration_since(at) >= Duration::from_secs(1))
+        {
+            self.pads_asked = Some(now);
+            if let Some(listed) = crate::mobile::android_app().and_then(|a| crate::android::gamepads(&a))
+                && self.pads.os_pads(listed, input)
+            {
+                tracing::info!(target: "gamepad", "a gamepad went away: every pad is disconnected");
+            }
+        }
         if let Some(w) = &self.window {
             w.pre_present_notify();
         }
@@ -391,8 +494,55 @@ impl WinitRunner {
         self.apply_window_state();
         if self.app.should_exit() {
             self.exiting = true;
+            // Android: the activity is finished first, and the loop ends when it is destroyed
+            // (`about_to_wait`); a process that ended under a live activity would be started again.
+            #[cfg(target_os = "android")]
+            if crate::mobile::android_app().is_some_and(|a| crate::android::finish_activity(&a)) {
+                return;
+            }
             event_loop.exit();
         }
+    }
+
+    /// A key event of a gamepad (Android): `true` when it went to the pad and is no key.
+    #[cfg(target_os = "android")]
+    fn android_pad_key(&mut self, device: DeviceId, key: &PhysicalKey, pressed: bool) -> bool {
+        use winit::keyboard::{KeyCode, NativeKeyCode};
+        let input = self.app.resources.init::<Input>();
+        match *key {
+            PhysicalKey::Unidentified(NativeKeyCode::Android(code)) => self.pads.key(device, code, pressed, input),
+            PhysicalKey::Code(code) => {
+                let button = match code {
+                    KeyCode::ArrowUp => crate::input::GamepadButton::DPadUp,
+                    KeyCode::ArrowDown => crate::input::GamepadButton::DPadDown,
+                    KeyCode::ArrowLeft => crate::input::GamepadButton::DPadLeft,
+                    KeyCode::ArrowRight => crate::input::GamepadButton::DPadRight,
+                    _ => return false,
+                };
+                self.pads.dpad_key(device, button, pressed, input)
+            }
+            _ => false,
+        }
+    }
+
+    /// The app goes to the background or loses the focus: no key, button or finger stays held.
+    fn release_input(&mut self) {
+        self.input().release_all();
+        self.app
+            .resources
+            .scope::<crate::touch_pointer::TouchMouse, _>(|res, mouse| mouse.reset(res.init::<Input>()));
+    }
+
+    /// A finger: through [`crate::touch_pointer::TouchMouse`] to the mouse, the gesture and
+    /// the touches of [`Input`] (the path a scripted touch takes too).
+    fn touch(&mut self, id: u64, phase: TouchPhase, p: Vec2) {
+        let scale = self.state().scale_factor.max(1.0) as f32;
+        self.app
+            .resources
+            .scope::<crate::touch_pointer::TouchMouse, _>(|res, mouse| {
+                mouse.scale = scale;
+                mouse.touch(res.init::<Input>(), id, phase, p);
+            });
     }
 
     /// Push game-side changes of [`WindowState`] to the OS window.
@@ -400,6 +550,107 @@ impl WinitRunner {
         let Some(window) = self.window.clone() else {
             return;
         };
+        // Phones: the on-screen keyboard is up while a text field wants text (`TextInput`).
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        {
+            let wanted = self
+                .app
+                .resources
+                .get::<crate::window::TextInput>()
+                .is_some_and(|t| t.wanted);
+            if wanted != self.keyboard_shown {
+                self.keyboard_shown = wanted;
+                window.set_ime_allowed(wanted);
+            }
+            // A finger lifted a few frames ago and a text field (still) has the focus: the
+            // player may have put the keyboard away himself, which nothing tells the app.
+            // Asking for a keyboard that is up changes nothing.
+            if self.keyboard_again > 0 {
+                self.keyboard_again -= 1;
+                if self.keyboard_again == 0 && wanted {
+                    window.set_ime_allowed(true);
+                }
+            }
+        }
+        // Android: how much of the window the keyboard covers, asked every few frames while a
+        // text field wants text (the keyboard slides in over some), and 0 otherwise.
+        #[cfg(target_os = "android")]
+        {
+            let wanted = self.keyboard_shown;
+            self.keyboard_asked += 1;
+            let known = self.app.resources.get::<crate::window::KeyboardInset>().copied();
+            let now = if !wanted {
+                Some(crate::window::KeyboardInset::default())
+            } else if self.keyboard_asked >= 6 {
+                self.keyboard_asked = 0;
+                crate::mobile::android_app()
+                    .and_then(|android| crate::android::keyboard_inset(&android))
+                    .map(|bottom| crate::window::KeyboardInset { bottom })
+            } else {
+                None
+            };
+            if let Some(now) = now
+                && known != Some(now)
+            {
+                tracing::info!("Android: the on-screen keyboard covers {} px", now.bottom);
+                // The keyboard gone: it may have brought the navigation bar back, and nothing
+                // else (no focus change, no resume) hides it again.
+                if now.bottom == 0
+                    && known.is_some_and(|k| k.bottom > 0)
+                    && crate::mobile::immersive()
+                    && let Some(android) = crate::mobile::android_app()
+                {
+                    crate::android::hide_system_bars(&android);
+                }
+                self.app.insert_resource(now);
+            }
+        }
+        // iOS: the safe area, asked every frame (it changes with the rotation, after the resize).
+        #[cfg(target_os = "ios")]
+        {
+            let size = window.outer_size();
+            let area = crate::ios::safe_area(&window).turned_for_landscape((size.width, size.height));
+            if self.app.resources.get::<crate::window::SafeArea>() != Some(&area) {
+                tracing::info!("iOS: the safe area is {area:?} of {size:?}");
+                self.app.insert_resource(area);
+            }
+        }
+        // Android: what the system bars and a cutout cover of the window. Java's insets
+        // (`crate::android`), asked again when the window's size changes and every 30 frames
+        // (nothing tells a NativeActivity app that they changed).
+        #[cfg(target_os = "android")]
+        if let Some(android) = crate::mobile::android_app() {
+            let size = window.inner_size();
+            let key = (size.width, size.height);
+            self.insets.2 += 1;
+            if self.insets.1 != key || self.insets.2 >= 30 {
+                self.insets = (crate::android::window_insets(&android), key, 0);
+            }
+            let r = android.content_rect();
+            let area = self.insets.0.unwrap_or_else(|| {
+                // No answer from Java: the content rectangle, which for an edge-to-edge window
+                // (every app from Android 15 on) is the whole window; then keep the UI off the
+                // navigation bar's pill at least.
+                let mut area = crate::window::SafeArea::from_content_rect(
+                    (r.left, r.top, r.right, r.bottom),
+                    (size.width, size.height),
+                );
+                if area == crate::window::SafeArea::default() {
+                    area.bottom =
+                        (crate::window::SafeArea::ANDROID_NAVIGATION_POINTS * window.scale_factor()).round() as u32;
+                }
+                area
+            });
+            if self.app.resources.get::<crate::window::SafeArea>() != Some(&area) {
+                let from = if self.insets.0.is_some() {
+                    "the window's insets"
+                } else {
+                    "a guess"
+                };
+                tracing::info!("Android: the safe area is {area:?} of {size:?} ({from}; content {r:?})");
+                self.app.insert_resource(area);
+            }
+        }
         let requested = self
             .app
             .resources
@@ -458,6 +709,9 @@ impl ApplicationHandler for WinitRunner {
                 event_loop.exit();
                 return;
             };
+            // iOS: the window joins the app's scene (`crate::ios`).
+            #[cfg(target_os = "ios")]
+            crate::ios::attach(&w);
             self.window = Some(w);
         }
         let window = self.window.clone().expect("window");
@@ -469,9 +723,17 @@ impl ApplicationHandler for WinitRunner {
         }
         self.ensure_renderer(event_loop, &window);
         self.poll_layout(Instant::now(), true);
-        let size = window.inner_size();
+        let size = drawable_size(&window);
         self.on_resize(UVec2::new(size.width, size.height));
         self.send(PlatformEvent::Resumed);
+        // Android: the system bars hidden again (the system shows them while the app is away).
+        #[cfg(target_os = "android")]
+        if crate::mobile::immersive()
+            && let Some(android) = crate::mobile::android_app()
+        {
+            crate::android::hide_system_bars(&android);
+        }
+        space3d_core::BackgroundHooks::run(&mut self.app.resources, false);
         // Avoid a huge dt after returning from background.
         self.last_frame = None;
         window.request_redraw();
@@ -484,8 +746,15 @@ impl ApplicationHandler for WinitRunner {
             r.remove_surface();
         }
         self.state().suspended = true;
-        self.input().release_all();
+        self.release_input();
+        // The system hides the on-screen keyboard with the app: ask again after the resume.
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        {
+            self.keyboard_shown = false;
+        }
         self.send(PlatformEvent::Suspended);
+        // No frame runs until the resume, so what must stop now (sound) hangs here.
+        space3d_core::BackgroundHooks::run(&mut self.app.resources, true);
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -497,7 +766,16 @@ impl ApplicationHandler for WinitRunner {
                     event_loop.exit();
                 }
             }
-            WindowEvent::Resized(size) => self.on_resize(UVec2::new(size.width, size.height)),
+            WindowEvent::Resized(size) => {
+                // iOS: the whole screen (`drawable_size`), not the event's safe area. Elsewhere
+                // the event's own size, which is the one the system announced.
+                let size = if cfg!(target_os = "ios") {
+                    self.window.as_deref().map_or(size, drawable_size)
+                } else {
+                    size
+                };
+                self.on_resize(UVec2::new(size.width, size.height));
+            }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.state().scale_factor = scale_factor;
                 self.send(PlatformEvent::ScaleFactorChanged(scale_factor));
@@ -507,13 +785,32 @@ impl ApplicationHandler for WinitRunner {
                 if focused {
                     // The layout may have been switched while another app had focus.
                     self.poll_layout(Instant::now(), true);
+                    // Android: a dialog or the notification shade that took the focus may have
+                    // shown the bars; hide them again.
+                    #[cfg(target_os = "android")]
+                    if crate::mobile::immersive()
+                        && let Some(android) = crate::mobile::android_app()
+                    {
+                        crate::android::hide_system_bars(&android);
+                    }
                 } else {
-                    self.input().release_all();
+                    self.release_input();
                 }
                 self.send(PlatformEvent::Focused(focused));
             }
-            WindowEvent::KeyboardInput { event, .. } => {
+            WindowEvent::KeyboardInput {
+                event,
+                #[cfg(target_os = "android")]
+                device_id,
+                ..
+            } => {
                 let pressed = event.state == ElementState::Pressed;
+                // Android: a gamepad's buttons are keys of no place, and a known pad's arrow
+                // keys are its d-pad (`crate::gamepad`).
+                #[cfg(target_os = "android")]
+                if self.android_pad_key(device_id, &event.physical_key, pressed) {
+                    return;
+                }
                 // winit 0.30 leaves some keys unidentified or reports two keys as one (macOS
                 // ISO and JIS keys): see `layout::physical_key`.
                 match crate::layout::physical_key(event.physical_key) {
@@ -538,8 +835,21 @@ impl ApplicationHandler for WinitRunner {
                         self.input().inject_key_event(key_event);
                     }
                     PhysicalKey::Unidentified(_) => {
-                        if pressed && let Some(text) = &event.text {
-                            self.input().inject_text(text);
+                        // Android: Back is a key of no place (winit 0.30: `Unidentified`, logical
+                        // `BrowserBack`).
+                        if let Some(keys) = back_as_escape(&event.logical_key, pressed) {
+                            for key_event in keys {
+                                self.input().inject_key_event(key_event);
+                            }
+                        } else if pressed && let Some(text) = &event.text {
+                            // iOS: the on-screen keyboard's Return is the text "\n" of no key.
+                            if let Some(enter) = return_as_enter(text) {
+                                for key_event in enter {
+                                    self.input().inject_key_event(key_event);
+                                }
+                            } else {
+                                self.input().inject_text(text);
+                            }
                         }
                     }
                 }
@@ -569,8 +879,46 @@ impl ApplicationHandler for WinitRunner {
             }
             WindowEvent::Touch(t) => {
                 let p = Vec2::new(t.location.x as f32, t.location.y as f32);
-                self.input().inject_touch(t.id, TouchPhase::from(t.phase), p);
+                let phase = TouchPhase::from(t.phase);
+                // Android: a pad's stick comes as a "touch" that never went down; it is the
+                // stick, not a finger (`crate::gamepad::AndroidPads::touch`).
+                #[cfg(target_os = "android")]
+                {
+                    let input = self.app.resources.init::<Input>();
+                    if self.pads.touch(t.device_id, phase, p, input) {
+                        return;
+                    }
+                }
+                self.touch(t.id, phase, p);
+                #[cfg(any(target_os = "android", target_os = "ios"))]
+                match phase {
+                    TouchPhase::Started => {
+                        self.touch_down.retain(|(id, _)| *id != t.id);
+                        self.touch_down.push((t.id, p));
+                    }
+                    TouchPhase::Cancelled => self.touch_down.retain(|(id, _)| *id != t.id),
+                    TouchPhase::Ended => {
+                        // Once the tap's click is through the UI (`touch_pointer`: three
+                        // frames). Only a tap asks: a finger that scrolled a list or dragged a
+                        // window beside a focused field does not bring back the keyboard the
+                        // player put away.
+                        let slop = crate::touch_pointer::TouchPointerConfig::SLOP_POINTS
+                            * self.state().scale_factor.max(1.0) as f32;
+                        let down = self.touch_down.iter().position(|(id, _)| *id == t.id);
+                        if down
+                            .map(|i| self.touch_down.swap_remove(i).1)
+                            .is_some_and(|down| crate::window::lift_is_a_tap(down, p, slop))
+                        {
+                            self.keyboard_again = 5;
+                        }
+                    }
+                    _ => {}
+                }
             }
+            // Text an input method commits. winit 0.30 sends it on desktop only (when the game
+            // allows IME): iOS's on-screen keyboard arrives as key events with text, and
+            // Android's only as far as the keyboard sends key events (ASCII; docs/platforms.md).
+            WindowEvent::Ime(winit::event::Ime::Commit(text)) => self.input().inject_text(&text),
             WindowEvent::RedrawRequested => self.frame(event_loop),
             _ => {}
         }
@@ -589,10 +937,72 @@ impl ApplicationHandler for WinitRunner {
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         #[cfg(target_arch = "wasm32")]
         self.poll_pending_renderer();
+        // A phone app in the background has no surface to draw to: sleep until the system
+        // wakes it (measured on the emulator: a whole core spent polling otherwise). Frames,
+        // and with them the game's systems, stand still until it is resumed.
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        {
+            let suspended = self.state().suspended;
+            // Android: the activity was destroyed (`crate::android`). Java's `onDestroy` waits
+            // for this thread, so the loop ends here and `android_main_entry` ends the process.
+            #[cfg(target_os = "android")]
+            if (suspended || self.exiting)
+                && !_event_loop.exiting()
+                && crate::mobile::android_app().is_some_and(|a| crate::android::activity_destroyed(&a))
+            {
+                tracing::info!("Android: the activity is destroyed, leaving the event loop");
+                self.exiting = true;
+                _event_loop.exit();
+                return;
+            }
+            _event_loop.set_control_flow(if suspended { ControlFlow::Wait } else { FRAME_FLOW });
+            if suspended {
+                return;
+            }
+        }
         if let Some(w) = &self.window {
             w.request_redraw();
         }
     }
+}
+
+/// The Enter key's press and release for a key event that is only the text of Return. iOS's
+/// on-screen keyboard sends Return so (winit 0.30: `PhysicalKey::Unidentified`, text `"\n"`),
+/// and a UI drops control characters from text, so the form would never be sent.
+fn return_as_enter(text: &str) -> Option<[KeyEvent; 2]> {
+    use crate::layout::{LogicalKey, NamedKey};
+    matches!(text, "\n" | "\r" | "\r\n").then(|| {
+        let enter = LogicalKey::Named(NamedKey::Enter);
+        [
+            KeyEvent::press(winit::keyboard::KeyCode::Enter, enter.clone()).with_text(None),
+            KeyEvent::release(winit::keyboard::KeyCode::Enter, enter),
+        ]
+    })
+}
+
+/// Android's Back as two keys an app can read: `BrowserBack` (it was Back) and `Escape` (what
+/// Back means in a UI: close what is open), pressed or released as Back is. winit 0.30 gives
+/// Back as a key of no place (`PhysicalKey::Unidentified`) whose logical key is
+/// `NamedKey::BrowserBack`, and reports it as handled, so the system does nothing more with
+/// it: leaving the app on Back is the app's to do. (An app that targets Android 16 is not sent
+/// the key at all unless its manifest opts out of the predictive back gesture.)
+fn back_as_escape(logical: &winit::keyboard::Key, pressed: bool) -> Option<[KeyEvent; 2]> {
+    use crate::layout::{LogicalKey, NamedKey};
+    use winit::keyboard::KeyCode;
+    (*logical == LogicalKey::Named(NamedKey::BrowserBack)).then(|| {
+        let of = |code: KeyCode, named: NamedKey| {
+            let key = LogicalKey::Named(named);
+            if pressed {
+                KeyEvent::press(code, key).with_text(None)
+            } else {
+                KeyEvent::release(code, key)
+            }
+        };
+        [
+            of(KeyCode::BrowserBack, NamedKey::BrowserBack),
+            of(KeyCode::Escape, NamedKey::Escape),
+        ]
+    })
 }
 
 /// winit's `key_without_modifiers` where the platform has it (Windows, macOS, X11, Wayland).
@@ -635,6 +1045,55 @@ fn key_without_modifiers(_event: &winit::event::KeyEvent) -> Option<winit::keybo
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// iOS's Return (the text "\n" of an unidentified key) is the Enter key, pressed and
+    /// released, with no text; any other text stays text.
+    #[test]
+    fn the_text_of_return_is_the_enter_key() {
+        use winit::keyboard::KeyCode;
+        for text in ["\n", "\r", "\r\n"] {
+            let [down, up] = return_as_enter(text).expect("Return");
+            assert_eq!(
+                (down.physical, down.pressed, down.text.as_deref()),
+                (KeyCode::Enter, true, None)
+            );
+            assert_eq!(
+                (up.physical, up.pressed, up.text.as_deref()),
+                (KeyCode::Enter, false, None)
+            );
+            let mut input = Input::default();
+            input.inject_key_event(down);
+            assert!(input.just_pressed(KeyCode::Enter));
+            assert_eq!(input.text(), "");
+            input.inject_key_event(up);
+            assert!(!input.pressed(KeyCode::Enter));
+        }
+        assert!(return_as_enter("a").is_none());
+        assert!(return_as_enter("\n\n").is_none());
+        assert!(return_as_enter("").is_none());
+    }
+
+    /// Android's Back is the Back key and the Escape key, down with it and up with it; no
+    /// other key of no place is.
+    #[test]
+    fn back_is_also_escape() {
+        use crate::layout::{LogicalKey, NamedKey};
+        use winit::keyboard::KeyCode;
+        let back = LogicalKey::Named(NamedKey::BrowserBack);
+        let mut input = Input::default();
+        for key_event in back_as_escape(&back, true).expect("Back") {
+            assert_eq!(key_event.text, None);
+            input.inject_key_event(key_event);
+        }
+        assert!(input.just_pressed(KeyCode::BrowserBack) && input.just_pressed(KeyCode::Escape));
+        assert_eq!(input.text(), "");
+        for key_event in back_as_escape(&back, false).expect("Back") {
+            input.inject_key_event(key_event);
+        }
+        assert!(!input.pressed(KeyCode::BrowserBack) && !input.pressed(KeyCode::Escape));
+        assert!(back_as_escape(&LogicalKey::Named(NamedKey::BrowserForward), true).is_none());
+        assert!(back_as_escape(&LogicalKey::Character("a".into()), true).is_none());
+    }
 
     #[test]
     fn surface_retry_needs_window_renderer_and_missing_surface() {
