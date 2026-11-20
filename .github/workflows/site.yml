@@ -68,3 +68,32 @@ jobs:
       - run: node site/scripts/sync-tokens.mjs
         env: { GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}", SYNC_SOFT_FAIL: "1" }
       - run: git diff --exit-code -- site/src/spacecorps-tokens.css
+
+  # Routes of the nginx config against the built static site (cheap: no wasm, no image build).
+  routes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: 24 }
+      - run: corepack enable && corepack install
+        working-directory: site
+      - run: pnpm install --frozen-lockfile && pnpm run build
+        working-directory: site
+      - name: Serve dist with site/nginx.conf and crawl the docs
+        run: |
+          docker run -d --name s3d -p 8080:8080             -v "$PWD/site/dist:/usr/share/nginx/html:ro"             -v "$PWD/site/nginx.conf:/etc/nginx/conf.d/default.conf:ro"             nginxinc/nginx-unprivileged:stable-alpine
+          sleep 3
+          fail=0
+          for p in / /docs /docs/ /docs.html /docs/getting-started/ /docs/graphics/frame/ /examples.html /llms.txt; do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -L "http://localhost:8080$p")
+            echo "$code $p"; [ "$code" = 200 ] || fail=1
+          done
+          # every internal link on the docs landing and on each docs page resolves
+          for page in /docs/ $(find site/dist/docs -name index.html | sed 's#site/dist##; s#index.html$##'); do
+            for l in $(curl -s "http://localhost:8080$page" | grep -o 'href="/[^"#]*' | cut -d'"' -f2 | sort -u); do
+              code=$(curl -s -o /dev/null -w '%{http_code}' -L "http://localhost:8080$l")
+              [ "$code" = 200 ] || { echo "BROKEN $code $l (on $page)"; fail=1; }
+            done
+          done
+          exit $fail
