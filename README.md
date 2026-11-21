@@ -173,8 +173,11 @@ Overview and how-tos: [docs/graphics.md](docs/graphics.md) · adopting it in a g
 ## Quickstart
 
 ```sh
-# install the CLI from this repository
-cargo install --path crates/space3d-cli
+# install the CLI (Rust 1.98+; builds from source, a few minutes the first time)
+cargo install --git https://github.com/SpaceCorps/Space3d space3d-cli
+# ... or from a checkout of this repository
+# cargo install --path crates/space3d-cli
+space3d doctor                           # lists what is missing, with the fix for each
 
 space3d new my_game --template 3d        # basic | 3d | multiplayer
 cd my_game

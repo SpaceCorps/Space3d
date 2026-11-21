@@ -3,6 +3,7 @@
 > Cross-platform 3D game engine in Rust (desktop, web, Android, iOS) with deterministic simulation, headless rendering and golden-screenshot tests. Built to be driven by Claude Code. Apache-2.0.
 
 ## Start
+- [Setup from zero, plain text](https://space3d.dev/claude/SETUP.md): install the CLI, scaffold, and one prompt to paste into Claude Code
 - [Getting started](https://github.com/SpaceCorps/Space3d/blob/main/docs/getting-started.md): install the space3d CLI, scaffold, run
 - [Claude Code integration](https://space3d.dev/claude-code.html): plugin, skill, AGENTS.md template
 - [AGENTS.md template](https://space3d.dev/claude/AGENTS.md)

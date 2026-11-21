@@ -1,7 +1,7 @@
 {
   "name": "space3d",
   "description": "Build, run, test and ship Space3d (Rust) games with Claude Code.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": { "name": "SpaceCorps" },
   "homepage": "https://space3d.dev",
   "repository": "https://github.com/SpaceCorps/Space3d",

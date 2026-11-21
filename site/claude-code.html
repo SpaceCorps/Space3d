@@ -13,24 +13,58 @@
 </div></header>
 <main id="main" class="wrap">
 <div class="page-head"><p class="eyebrow"><span class="dot"></span>Integration</p><h1>Space3d for <span class="grad">Claude Code</span></h1>
-<p class="lead">Give Claude the engine's rules and the build–test–look loop, and let it build the game. Everything lives in the repo under <code>integrations/claude-code/</code>.</p></div>
+<p class="lead">Start from zero: install the tools, scaffold a game, and let Claude build it with the engine's rules and the build–test–look loop. There are no prebuilt binaries yet, so the <code>space3d</code> CLI is built from source (a few minutes, once). Plain-text version for agents: <a href="/claude/SETUP.md">/claude/SETUP.md</a>.</p></div>
 <div class="prose">
-<ol class="steps" style="margin-top:40px">
-<li class="rv"><h3>Install the plugin</h3><p>Adds the <code>space3d-game</code> skill: scaffold, the edit → test → screenshot loop, and the engine's hard rules (fixed tick, never block the frame, wasm-clean).</p><pre><code>/plugin marketplace add SpaceCorps/Space3d
+<h2 id="paste">Paste this into Claude Code</h2>
+<p>The fastest way: replace <code>&lt;YOUR GAME IDEA&gt;</code> and paste the whole block into Claude Code in an empty folder. It installs what is missing, scaffolds the game and builds your idea.</p>
+<pre><code>I want to build a game with the Space3d engine (Rust). My idea: &lt;YOUR GAME IDEA&gt;
+
+Do this, and tell me what you ran and what happened:
+
+1. Learn the engine. Read https://space3d.dev/llms-full.txt (the README and all docs in one
+   file). If you cannot fetch URLs, use the public repository instead:
+   https://github.com/SpaceCorps/Space3d (clone it, read README.md, docs/getting-started.md and
+   integrations/claude-code/).
+2. Check the tools. You need git and Rust 1.98 or newer (`rustup update stable`). If
+   `space3d --version` fails, install the CLI (a few minutes, it compiles from source):
+   cargo install --git https://github.com/SpaceCorps/Space3d space3d-cli
+   Then run `space3d doctor` and apply the fixes it prints.
+3. Scaffold. Run `space3d new &lt;snake_case_name&gt; --template 3d` (templates: basic, 3d,
+   multiplayer) and cd into it. Save https://space3d.dev/claude/AGENTS.md as AGENTS.md and
+   create CLAUDE.md containing the single line @AGENTS.md
+4. Build my idea in src/lib.rs. After every change add or extend a test in tests/ and run
+   `space3d test`. Finish with `space3d run --headless --frames 120` and look at a screenshot.
+
+Never open a window that steals my focus: use headless runs. Do not say it is done until
+`space3d test` is green; show me the output.</code></pre>
+<h2 id="by-hand">Or do it by hand</h2>
+<ol class="steps" style="margin-top:24px">
+<li class="rv"><h3>Prerequisites</h3><p>Rust 1.98 or newer, git and a C linker. <code>space3d doctor</code> (step 3) tells you anything else that is missing.</p><pre><code>rustup update stable      # install rustup from https://rustup.rs first
+git --version
+# Windows: Visual Studio Build Tools, "Desktop development with C++"
+# macOS:   xcode-select --install
+# Linux:   gcc or clang, and pkg-config</code></pre></li>
+<li class="rv"><h3>Install the CLI</h3><p>Builds the <code>space3d</code> tool from source. This takes a few minutes the first time.</p><pre><code>cargo install --git https://github.com/SpaceCorps/Space3d space3d-cli
+space3d --version</code></pre></li>
+<li class="rv"><h3>Check the machine</h3><p>Lists what is installed for each platform (desktop, web, Android, iOS) and prints the exact command for anything missing, such as the wasm target.</p><pre><code>space3d doctor</code></pre></li>
+<li class="rv"><h3>Install the plugin (optional)</h3><p>Adds the <code>space3d-game</code> skill: scaffold, the edit → test → screenshot loop, and the engine's hard rules (fixed tick, never block the frame, wasm-clean). The <code>AGENTS.md</code> in step 5 carries the same rules without it.</p><pre><code>/plugin marketplace add SpaceCorps/Space3d
 /plugin install space3d@space3d</code></pre></li>
-<li class="rv"><h3>Drop in the AGENTS.md</h3><pre><code>curl -fsSL https://space3d.dev/claude/AGENTS.md -o AGENTS.md
-echo '@AGENTS.md' &gt; CLAUDE.md</code></pre><p><a href="/claude/AGENTS.md">View the template</a> · <a href="/claude/SKILL.md">View the skill</a></p></li>
-<li class="rv"><h3>Ask</h3><pre><code>space3d new asteroids --template 3d
-claude "Make a top-down asteroid shooter. Add tests, run space3d test, show me a screenshot."</code></pre><p>Claude can run, test and screenshot headless, so no window pops up. There is no MCP server yet; the <code>space3d</code> CLI is the tool surface.</p></li>
+<li class="rv"><h3>Scaffold a game</h3><p>Templates: <code>basic</code>, <code>3d</code>, <code>multiplayer</code>. Then give Claude the rules: <a href="/claude/AGENTS.md">the template</a> · <a href="/claude/SKILL.md">the skill</a>.</p><pre><code>space3d new asteroids --template 3d
+cd asteroids
+curl -fsSL https://space3d.dev/claude/AGENTS.md -o AGENTS.md
+echo '@AGENTS.md' &gt; CLAUDE.md</code></pre></li>
+<li class="rv"><h3>Ask</h3><p>Claude can run, test and screenshot headless, so no window pops up. There is no MCP server yet; the <code>space3d</code> CLI is the tool surface.</p><pre><code>claude "Make a top-down asteroid shooter. Add tests, run space3d test, show me a screenshot."</code></pre></li>
 </ol>
-<h2>For other agents</h2><p><a href="/llms.txt">llms.txt</a> indexes the docs; <a href="/llms-full.txt">llms-full.txt</a> is the README plus all docs in one file.</p>
+<h2 id="agents">For other agents</h2><p>Everything on this page is plain HTML, and <a href="/claude/SETUP.md">/claude/SETUP.md</a> is the same text as Markdown. <a href="/llms.txt">llms.txt</a> indexes the docs; <a href="/llms-full.txt">llms-full.txt</a> is the README plus all docs in one file. The source is public: <a href="https://github.com/SpaceCorps/Space3d">github.com/SpaceCorps/Space3d</a>.</p>
+<h2 id="trouble">If something fails</h2>
+<ul><li><code>space3d: command not found</code>: add <code>~/.cargo/bin</code> (Windows: <code>%USERPROFILE%\.cargo\bin</code>) to your PATH.</li><li>A compile error while installing: check that <code>rustc --version</code> is 1.98 or newer.</li><li>Anything else: run <code>space3d doctor</code> and <a href="https://github.com/SpaceCorps/Space3d/issues">open an issue</a> with its output.</li></ul>
 </div></main>
 <footer class="foot"><div class="wrap">
 <div class="foot-grid">
 <div><a class="brand" href="/"><svg viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true"><path d="M16 3.5l11 6.25v12.5L16 28.5 5 22.25V9.75z"/><path d="M16 16V28.5M16 16L5 9.75M16 16l11-6.25"/></svg><span>Space<b>3d</b></span></a><p>A cross-platform 3D game engine in Rust, made to be driven by Claude Code.</p></div>
 <div><h4>Build</h4><ul><li><a href="/#quickstart">Quickstart</a></li><li><a href="/claude-code.html">Claude Code</a></li><li><a href="/examples.html">Examples</a></li><li><a href="/docs.html">Docs</a></li></ul></div>
 <div><h4>Project</h4><ul><li><a href="https://github.com/SpaceCorps/Space3d">GitHub</a></li><li><a href="https://github.com/SpaceCorps/Space3d/issues">Issues</a></li><li><a href="https://github.com/SpaceCorps/Space3d/blob/main/LICENSE">Licence</a></li></ul></div>
-<div><h4>For agents</h4><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li><li><a href="/claude/AGENTS.md">AGENTS.md template</a></li></ul></div>
+<div><h4>For agents</h4><ul><li><a href="/llms.txt">llms.txt</a></li><li><a href="/llms-full.txt">llms-full.txt</a></li><li><a href="/claude/SETUP.md">Setup (plain text)</a></li><li><a href="/claude/AGENTS.md">AGENTS.md template</a></li></ul></div>
 </div>
 <div class="foot-base"><span>Space3d is Apache-2.0.</span><span>Made by <a href="https://spacecorps.tech">SpaceCorps</a></span></div>
 </div></footer>

@@ -3,8 +3,9 @@
 ## 1. Install
 
 * Rust **1.98+** (`rustup update stable`).
-* The CLI: `cargo install --path crates/space3d-cli` from a Space3d checkout (installs the
-  `space3d` binary into `~/.cargo/bin`).
+* The CLI: `cargo install --git https://github.com/SpaceCorps/Space3d space3d-cli` (builds the
+  `space3d` binary from source into `~/.cargo/bin`; a few minutes the first time, there are no
+  prebuilt binaries yet). From a Space3d checkout: `cargo install --path crates/space3d-cli`.
 * Run `space3d doctor` — it lists what is installed for each platform and prints the exact
   command for anything missing (wasm target, `wasm-bindgen-cli`, Android NDK, Xcode, …).
 

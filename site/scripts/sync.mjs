@@ -9,9 +9,11 @@ const pub = join(root, "site", "public");
 mkdirSync(join(pub, "claude"), { recursive: true });
 cpSync(join(root, "integrations/claude-code/AGENTS.template.md"), join(pub, "claude/AGENTS.md"));
 cpSync(join(root, "integrations/claude-code/skills/space3d-game/SKILL.md"), join(pub, "claude/SKILL.md"));
+cpSync(join(root, "integrations/claude-code/SETUP.md"), join(pub, "claude/SETUP.md"));
 
 const docs = readdirSync(join(root, "docs")).filter((f) => f.endsWith(".md")).sort();
-const body = [readFileSync(join(root, "README.md"), "utf8")]
+// The setup text first: an agent that reads only the start of the file learns how to begin.
+const body = [readFileSync(join(root, "integrations/claude-code/SETUP.md"), "utf8"), readFileSync(join(root, "README.md"), "utf8")]
   .concat(docs.map((f) => `\n\n<!-- docs/${f} -->\n` + readFileSync(join(root, "docs", f), "utf8")))
   .join("\n");
 writeFileSync(join(pub, "llms-full.txt"), body);

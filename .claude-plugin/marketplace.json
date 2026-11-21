@@ -1,6 +1,7 @@
 {
   "name": "space3d",
   "owner": { "name": "SpaceCorps" },
+  "description": "Claude Code plugins for Space3d, a cross-platform 3D game engine in Rust: build, test and ship games with Claude Code.",
   "plugins": [
     {
       "name": "space3d",
