@@ -102,6 +102,11 @@ impl Proc {
         Some(status)
     }
 
+    /// The exit status if the process already exited (it stays waitable via [`Self::wait`]).
+    pub fn exited(&mut self) -> Option<ExitStatus> {
+        self.child.as_mut()?.try_wait().ok().flatten()
+    }
+
     /// Everything printed so far (stdout and stderr, ANSI colours removed).
     pub fn output(&self) -> String {
         strip_ansi(&self.output.lock().unwrap())
@@ -196,15 +201,29 @@ pub fn ready(admin: u16) -> bool {
     http_get(admin, "/readyz").is_some_and(|(ok, _)| ok)
 }
 
-/// Wait until `admin`'s `/readyz` answers 200.
+/// Wait until `proc`'s `/readyz` (on `admin`) answers 200.
 ///
 /// Generous deadline: a debug-build server starting next to a busy machine (parallel suites,
 /// other builds; load averages of 30+) has taken over 15 s to become ready. A server that is
-/// actually broken still fails the test, just later.
-pub fn wait_ready(admin: u16, what: &str) {
+/// actually broken still fails the test, just later. A server that already exited (e.g. its
+/// port was taken) fails at once, and either way the failure carries the process's output:
+/// "did not become ready" alone cannot tell a crash from a slow start.
+pub fn wait_ready(proc: &mut Proc, admin: u16, what: &str) {
     let end = Instant::now() + Duration::from_secs(60);
     while !ready(admin) {
-        assert!(Instant::now() < end, "{what} did not become ready");
+        if let Some(status) = proc.exited() {
+            panic!(
+                "{what} exited ({status}) before it became ready; output:
+{}",
+                proc.output()
+            );
+        }
+        assert!(
+            Instant::now() < end,
+            "{what} did not become ready within 60 s (admin port {admin}); output so far:
+{}",
+            proc.output()
+        );
         std::thread::sleep(Duration::from_millis(50));
     }
 }
@@ -261,8 +280,8 @@ impl Server {
         for (k, v) in extra_env {
             cmd.env(k, v);
         }
-        let proc = Proc::spawn("server", cmd);
-        wait_ready(admin, "server");
+        let mut proc = Proc::spawn("server", cmd);
+        wait_ready(&mut proc, admin, "server");
         Self {
             proc,
             port,
