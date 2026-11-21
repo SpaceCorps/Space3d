@@ -11,7 +11,7 @@ publish.workspace = true
 space3d-core.workspace = true
 glam.workspace = true
 tracing.workspace = true
-rapier3d = "0.35.3"
+rapier3d = "0.36.1"
 
 [dev-dependencies]
 criterion.workspace = true
