@@ -644,7 +644,14 @@ fn editor_panels_keep_their_width_under_any_style() {
         for selection in [Some(camera), Some(graphics), None, Some(cube)] {
             app.resources.expect_mut::<EditorState>().selected = selection;
             app.step_ticks(6);
-            assert_eq!(widths(&app), first, "{name}: same width with {selection:?} selected");
+            // Different selections lay out different text, and glyph metrics differ by a
+            // fraction of a pixel between platforms (0.1875 px on macOS): the width must not
+            // depend on the selection beyond that. Growth over frames stays exact (above).
+            let now = widths(&app);
+            assert!(
+                (now.0 - first.0).abs() < 1.0 && (now.1 - first.1).abs() < 1.0,
+                "{name}: same width with {selection:?} selected: {now:?} vs {first:?}"
+            );
         }
     }
 }
