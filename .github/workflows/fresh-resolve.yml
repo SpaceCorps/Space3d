@@ -1,0 +1,48 @@
+name: Fresh dependency resolution
+# What a new user builds. `cargo install --git` and every `space3d new` scaffold resolve their
+# dependencies WITHOUT this repository's Cargo.lock, so they get the newest versions the
+# manifests allow. CI otherwise builds with the lockfile, which can hide a crate that only
+# compiles because the lockfile happens to unify a dependency's features (space3d-audio needed
+# glam's `mint` feature, enabled only through kira on the same glam version; a fresh scaffold
+# failed to compile). This job builds the workspace and a scaffolded game without the lockfile.
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/*/Cargo.toml"
+      - "examples/*/Cargo.toml"
+      - "crates/space3d-cli/templates/**"
+      - "third_party/**"
+      - ".github/workflows/fresh-resolve.yml"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fresh-resolve:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: fresh-resolve
+      - name: System deps
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libdbus-1-dev pkg-config
+      - name: The workspace without its Cargo.lock
+        run: |
+          rm Cargo.lock
+          cargo generate-lockfile
+          cargo check --workspace --exclude hello_cube_mobile --all-targets
+      - name: A new user's game (CLI installed, scaffold built, no engine lockfile)
+        run: |
+          # `cargo install --path` without --locked resolves afresh, like `--git` does.
+          cargo install --path crates/space3d-cli --root "$RUNNER_TEMP/s3d"
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/s3d/bin/space3d" new smoke --template 3d --space3d-path "$GITHUB_WORKSPACE"
+          cd smoke
+          cargo check --all-targets
