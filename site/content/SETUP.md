@@ -83,6 +83,9 @@ curl -fsSL https://space3d.dev/claude/AGENTS.md -o AGENTS.md
 echo '@AGENTS.md' > CLAUDE.md
 ```
 
+`AGENTS.md` is plain text (the engine's rules for the agent). Open it and read it before you
+use it; nothing here runs a downloaded file.
+
 On Windows PowerShell, use `Invoke-WebRequest https://space3d.dev/claude/AGENTS.md -OutFile AGENTS.md`
 and `Set-Content CLAUDE.md '@AGENTS.md'`.
 
