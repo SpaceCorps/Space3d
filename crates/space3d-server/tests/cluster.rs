@@ -615,6 +615,10 @@ fn a_rejoin_during_a_handoff_waits_for_the_final_checkpoint() {
     c.step_ticks(30);
     send(&mut c, ca, &SetHealth(42));
     assert!(c.run_until(120, |c| pawn_health(c.room(room).unwrap(), player(&alice)) == Some(42)));
+    // The final capture is stored in the background, in real time: hold it, so that the room
+    // is still frozen however many ticks the steps below take (released once the rejoin was
+    // seen to wait).
+    c.hold_checkpoint_uploads();
     let (status, _) = admin(&c, &host, "POST", "/admin/v1/drain", None, true);
     assert_eq!(status, 202);
     let moving = c.run_until(600, |c| {
@@ -627,6 +631,7 @@ fn a_rejoin_during_a_handoff_waits_for_the_final_checkpoint() {
     let rejoin = std::thread::spawn(move || api.rejoin().block());
     std::thread::sleep(Duration::from_millis(300));
     assert!(!rejoin.is_finished(), "the rejoin waits for the handoff");
+    c.release_checkpoint_uploads();
     assert!(
         run_until_bg(&mut c, 900, |_| rejoin.is_finished()),
         "answered after the handoff"
@@ -1077,6 +1082,9 @@ fn a_rejoin_sent_the_moment_the_handoff_disconnects_is_held_for_the_restore() {
     assert!(c.run_until(120, |c| pawn_health(c.room(room).unwrap(), player(&alice)) == Some(42)));
     c.step_ticks(30);
 
+    // The final capture is stored in the background, in real time: hold it so that the room
+    // is still moving whenever the assertion below looks (released right after).
+    c.hold_checkpoint_uploads();
     let (status, _) = admin(&c, &host, "POST", "/admin/v1/drain", None, true);
     assert_eq!(status, 202);
     // Each client asks the player service to rejoin as soon as its disconnect arrives — before
@@ -1101,6 +1109,7 @@ fn a_rejoin_sent_the_moment_the_handoff_disconnects_is_held_for_the_restore() {
         rejoins.iter().all(|r| !r.is_finished()),
         "the player service answered a rejoin while the room was still moving (a ticket back to the draining server)"
     );
+    c.release_checkpoint_uploads();
     assert!(
         run_until_bg(&mut c, 1800, |_| rejoins
             .iter()
@@ -1173,6 +1182,10 @@ fn a_quick_play_during_a_handoff_joins_the_moved_room() {
     // Bob's quick play is answered just before the player service hears of the drain.
     let b = c.quick_play(&bob, "world").expect("quick play");
     assert_eq!((b.room_id, b.server_id.as_str()), (room, host.as_str()));
+    // The final capture is stored in the background, in real time: hold it, so that the room
+    // stays frozen and `moving` however many ticks the steps below take (released before the
+    // handoff is waited for).
+    c.hold_checkpoint_uploads();
     let (status, _) = admin(&c, &host, "POST", "/admin/v1/drain", None, true);
     assert_eq!(status, 202);
     assert!(c.run_until(600, |c| {
@@ -1201,6 +1214,7 @@ fn a_quick_play_during_a_handoff_joins_the_moved_room() {
     std::thread::sleep(Duration::from_millis(300));
     assert!(!quick.is_finished(), "quick play waits for the handoff");
     assert_eq!(rooms_of_mode(&c, "world"), vec![room]);
+    c.release_checkpoint_uploads();
     assert!(
         run_until_bg(&mut c, 1800, |_| quick.is_finished()),
         "answered after the handoff"

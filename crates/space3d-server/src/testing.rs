@@ -30,7 +30,7 @@ use crate::clock::{ManualUnixClock, UnixClock};
 use crate::config::{QueueConfig, Role, ServerConfig};
 use crate::game::{GameDefinition, RoomSpec};
 use crate::gs::GameServerHandle;
-use crate::gs::checkpoint::{CheckpointStore, PlayerServiceCheckpoints};
+use crate::gs::checkpoint::{CheckpointStore, PlayerServiceCheckpoints, StoreError};
 use crate::gs::fleet::{FleetLink, FleetOutage, in_process_pair};
 use crate::gs::room::{build_room_app, panic_message, run_tick_guarded};
 use crate::gs::rooms::{RoomEnv, RoomPhase, RoomStatus};
@@ -50,6 +50,7 @@ use space3d_replication::transport::conditioner::{LinkProfile, Semantics};
 use space3d_replication::transport::memory::{MemoryNetwork, MemoryServerEndpoint};
 use space3d_replication::transport::{ClientTransport, Connector, LinkEvent, TransportError};
 use space3d_replication::{PlayerId, RoomId};
+use space3d_tasks::Task;
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::panic::{AssertUnwindSafe, catch_unwind};
@@ -172,6 +173,47 @@ pub struct TestCluster {
     clients: Vec<ClientSlot>,
     crashes: u64,
     steps: u64,
+    /// While set, checkpoint uploads of every game server wait ([`Self::hold_checkpoint_uploads`]).
+    upload_hold: Arc<AtomicBool>,
+}
+
+/// Checkpoint store that holds its `put`s while the cluster's upload hold is set. The store
+/// itself completes on background threads, in real time; a test that must observe the state
+/// *during* a handoff cannot race that, so it holds the final upload instead and releases it
+/// when it is done looking (a room frozen for a handoff closes once its capture is stored).
+struct HeldCheckpoints {
+    inner: Arc<dyn CheckpointStore>,
+    hold: Arc<AtomicBool>,
+}
+
+impl CheckpointStore for HeldCheckpoints {
+    fn put(&self, room: RoomId, bytes: Vec<u8>) -> Task<Result<(), StoreError>> {
+        if !self.hold.load(Ordering::SeqCst) {
+            return self.inner.put(room, bytes);
+        }
+        let (inner, hold) = (self.inner.clone(), self.hold.clone());
+        space3d_tasks::spawn(async move {
+            while hold.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(2)).await;
+            }
+            match inner.put(room, bytes).wait().await {
+                Some(r) => r,
+                None => Err(StoreError("worker gone".into())),
+            }
+        })
+    }
+    fn get(&self, room: RoomId) -> Task<Result<Option<Vec<u8>>, StoreError>> {
+        self.inner.get(room)
+    }
+    fn recent(&self, min_saved_ms: i64) -> Task<Result<Vec<RoomId>, StoreError>> {
+        self.inner.recent(min_saved_ms)
+    }
+    fn delete(&self, room: RoomId, through_epoch: u32) -> Task<Result<(), StoreError>> {
+        self.inner.delete(room, through_epoch)
+    }
+    fn prune(&self, before_ms: i64) -> Task<Result<u64, StoreError>> {
+        self.inner.prune(before_ms)
+    }
 }
 
 fn loopback() -> SocketAddr {
@@ -219,6 +261,7 @@ impl TestCluster {
             clients: Vec::new(),
             crashes: 0,
             steps: 0,
+            upload_hold: Arc::new(AtomicBool::new(false)),
             config,
         };
         for i in 0..cluster.config.game_servers.max(1) {
@@ -250,9 +293,12 @@ impl TestCluster {
         let (link, peer) = in_process_pair();
         let outage = link.outage();
         self.ps_app.resources.expect_mut::<FleetHub>().add_local(peer);
-        let checkpoints: Arc<dyn CheckpointStore> = Arc::new(PlayerServiceCheckpoints {
-            store: self.ps.service.store.clone(),
-            clock: Arc::new(self.unix.clone()),
+        let checkpoints: Arc<dyn CheckpointStore> = Arc::new(HeldCheckpoints {
+            inner: Arc::new(PlayerServiceCheckpoints {
+                store: self.ps.service.store.clone(),
+                clock: Arc::new(self.unix.clone()),
+            }),
+            hold: self.upload_hold.clone(),
         });
         let fleet: Arc<dyn FleetLink> = Arc::new(link);
         let app = ServerMain::with_shared_game(game, config)
@@ -501,6 +547,20 @@ impl TestCluster {
         for _ in 0..n {
             self.step();
         }
+    }
+
+    /// Hold every game server's checkpoint uploads (they complete after
+    /// [`Self::release_checkpoint_uploads`]). A room handed off on drain closes only once its
+    /// freeze capture is stored, so while uploads are held it stays frozen and the player
+    /// service keeps reporting it as moving, however many ticks the test steps: tests of what
+    /// happens *during* a handoff use this instead of racing the background upload.
+    pub fn hold_checkpoint_uploads(&self) {
+        self.upload_hold.store(true, Ordering::SeqCst);
+    }
+
+    /// Let held checkpoint uploads complete.
+    pub fn release_checkpoint_uploads(&self) {
+        self.upload_hold.store(false, Ordering::SeqCst);
     }
 
     /// Step until `pred` holds (checked before each step) or `max_ticks` elapse.
