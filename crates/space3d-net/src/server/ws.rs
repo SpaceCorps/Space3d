@@ -12,6 +12,7 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -529,11 +530,14 @@ impl WsServer {
         tracing::debug!(client = id.0, %addr, "websocket client connected");
 
         let (mut sink, mut stream) = socket.split();
+        // Set when this side sent the Close frame: the socket then lingers (see `linger`).
+        let mut sent_close = false;
         let reason = loop {
             tokio::select! {
                 _ = shutdown.cancelled() => {
                     let frame = CloseFrame { code: close_code::AWAY, reason: "server shutting down".into() };
                     let _ = sink.send(AxMessage::Close(Some(frame))).await;
+                    sent_close = true;
                     break "server shutting down".to_owned();
                 }
                 out = rx.recv() => match out {
@@ -552,6 +556,7 @@ impl WsServer {
                     Some(Outgoing::Close(code, reason)) => {
                         let frame = CloseFrame { code, reason: reason.clone().into() };
                         let _ = sink.send(AxMessage::Close(Some(frame))).await;
+                        sent_close = true;
                         break reason;
                     }
                     None => break "server dropped".to_owned(),
@@ -561,11 +566,13 @@ impl WsServer {
                         if !self.inner.config.accept_text {
                             let frame = CloseFrame { code: CLOSE_UNSUPPORTED, reason: "text frames not accepted".into() };
                             let _ = sink.send(AxMessage::Close(Some(frame))).await;
+                            sent_close = true;
                             break "text frame rejected".to_owned();
                         }
                         if !self.push_inbound(id, Message::Text(t.as_str().to_owned())) {
                             let frame = CloseFrame { code: CLOSE_POLICY, reason: "inbox full".into() };
                             let _ = sink.send(AxMessage::Close(Some(frame))).await;
+                            sent_close = true;
                             break "inbox full".to_owned();
                         }
                     }
@@ -573,6 +580,7 @@ impl WsServer {
                         if !self.push_inbound(id, Message::Binary(b.to_vec())) {
                             let frame = CloseFrame { code: CLOSE_POLICY, reason: "inbox full".into() };
                             let _ = sink.send(AxMessage::Close(Some(frame))).await;
+                            sent_close = true;
                             break "inbox full".to_owned();
                         }
                     }
@@ -589,6 +597,7 @@ impl WsServer {
                         if text.contains("too long") || text.contains("Space limit") {
                             let frame = CloseFrame { code: CLOSE_TOO_BIG, reason: "message too big".into() };
                             let _ = sink.send(AxMessage::Close(Some(frame))).await;
+                            sent_close = true;
                             break format!("message too big: {text}");
                         }
                         break format!("connection error: {text}");
@@ -597,8 +606,13 @@ impl WsServer {
                 },
             }
         };
-        tracing::debug!(client = id.0, %reason, "websocket client disconnected");
+        // From here on the connection reports closed and refuses sends, but the socket stays open
+        // until the peer has answered the Close frame (or `CLOSE_LINGER` ran out).
         closed.store(true, Ordering::Release);
+        if sent_close {
+            linger(&mut stream).await;
+        }
+        tracing::debug!(client = id.0, %reason, "websocket client disconnected");
         let mut clients = self.inner.clients.lock();
         clients.remove(&id);
         let _ = self
@@ -606,6 +620,28 @@ impl WsServer {
             .events_tx
             .try_send(ServerEvent::Disconnected { client: id, reason });
     }
+}
+
+/// How long a socket that this side closed waits for the peer's answer.
+const CLOSE_LINGER: Duration = Duration::from_secs(1);
+
+/// After this side sent its Close frame: read (and drop) what the peer still sends until its own
+/// Close frame, EOF or an error. Closing a TCP socket that holds unread data makes the OS send a
+/// reset instead of an orderly FIN, and a reset discards what the peer has received but not yet
+/// read: a client that keeps sending inputs (every client of a game server does) lost the very
+/// `Disconnect` that the server queued before closing, and saw `connection aborted/reset` instead.
+async fn linger<S>(stream: &mut S)
+where
+    S: futures::Stream<Item = Result<AxMessage, axum::Error>> + Unpin,
+{
+    let _ = tokio::time::timeout(CLOSE_LINGER, async {
+        while let Some(Ok(message)) = stream.next().await {
+            if matches!(message, AxMessage::Close(_)) {
+                break;
+            }
+        }
+    })
+    .await;
 }
 
 fn header_string(headers: &HeaderMap, name: header::HeaderName) -> Option<String> {
