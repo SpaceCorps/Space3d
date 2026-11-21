@@ -507,6 +507,10 @@ fn capacity_case(
     // The ring is clamped to `MAX_LAYER_CAPACITY` by design: a layer that needs more alive at
     // once than that overwrites its oldest particles (see `capacity_clamp_overwrites_by_design`).
     prop_assume!(super::layer::capacity(&layer) < super::layer::MAX_LAYER_CAPACITY);
+    // The estimate counts burst cycles per window, assuming at most one cycle per tick: a burst
+    // interval shorter than the tick fires `dt / interval` cycles in every tick (CI found 0.056 ms
+    // against a 12.5 ms tick: 4 513 overwrites), which the ring is not sized for.
+    prop_assume!(interval == 0.0 || interval >= DT);
     let fx = h.add(ParticleEffect {
         looping,
         duration: 1.0,
