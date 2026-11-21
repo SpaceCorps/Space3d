@@ -33,20 +33,20 @@ for (const e of examples) {
 html,body{margin:0;height:100%;background:#04070a;color:#fafafa;font:14px "Geist Variable",system-ui,sans-serif;overflow:hidden;overscroll-behavior:none}
 /* The engine attaches to #space3d if present, else appends its own canvas to <body>: fill the viewport either way. */
 canvas{position:fixed;inset:0;display:block;width:100vw!important;height:100vh!important;height:100dvh!important;touch-action:none;outline:none}
-#bar{z-index:10;position:fixed;left:12px;top:max(12px,env(safe-area-inset-top));display:flex;gap:10px;align-items:center;padding:6px 14px 6px 6px;border-radius:99px;background:rgb(4 7 10 / .72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgb(255 255 255 / .16);pointer-events:none;font-weight:600}
+/* Site chrome lives in the bottom corners: the engine's own UI (F3 stats, panels, console) is top-left. */
+#bar{z-index:10;position:fixed;right:12px;bottom:max(12px,env(safe-area-inset-bottom));display:flex;padding:4px;border-radius:99px;background:rgb(4 7 10 / .72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgb(255 255 255 / .16);pointer-events:none;font-weight:600}
 #bar a{pointer-events:auto;display:inline-flex;align-items:center;min-height:32px;padding:0 12px;border-radius:99px;background:#00cc92;color:#000;text-decoration:none;font-weight:600}
 #bar a:hover{box-shadow:0 0 0 3px rgb(0 204 146 / .3)}
 #bar a:focus-visible{outline:2px solid #fff;outline-offset:2px}
-body.editor #bar{left:auto;right:12px;top:auto;bottom:max(12px,env(safe-area-inset-bottom));padding:4px}
-body.editor #bar span,body.editor #status{display:none}
-#status{z-index:10;position:fixed;left:12px;bottom:max(12px,env(safe-area-inset-bottom));max-width:calc(100vw - 24px);padding:8px 14px;border-radius:12px;background:rgb(4 7 10 / .72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgb(255 255 255 / .16);color:#cfcfd6;font:12px/1.5 "Geist Mono Variable",ui-monospace,monospace;pointer-events:none}
+#status{z-index:10;position:fixed;left:12px;bottom:max(12px,env(safe-area-inset-bottom));max-width:calc(100vw - 175px);transition:opacity .6s;padding:8px 14px;border-radius:12px;background:rgb(4 7 10 / .72);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border:1px solid rgb(255 255 255 / .16);color:#cfcfd6;font:12px/1.5 "Geist Mono Variable",ui-monospace,monospace;pointer-events:none}
+#status.gone{opacity:0}
 </style></head><body${e.chrome === "editor" ? ' class="editor"' : ""}>
-<div id="bar"><a href="/examples.html">← Examples</a><span>${esc(e.title)}</span></div>
+<div id="bar"><a href="/examples.html" aria-label="Back to examples">← Examples</a></div>
 <div id="status">loading… (first load downloads the engine)</div>
 <script type="module">
 import init from "./${e.id}.js";
 const status = document.getElementById("status");
-init().then(() => { status.textContent = ${JSON.stringify(e.controls)}; })
+init().then(() => { status.textContent = ${JSON.stringify(e.controls)}; setTimeout(() => status.classList.add("gone"), 10000); })
   .catch((err) => { status.textContent = "failed to start: " + err + " (needs WebGPU or WebGL2)"; console.error(err); });
 </script></body></html>
 `);
