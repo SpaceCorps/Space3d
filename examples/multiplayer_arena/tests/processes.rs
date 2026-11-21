@@ -164,9 +164,9 @@ impl Split {
             .env("SPACE3D__PLAYER_SERVICE__BIND", format!("127.0.0.1:{ps_port}"))
             .env("SPACE3D__ADMIN__BIND", format!("127.0.0.1:{ps_admin}"));
         common(&mut cmd);
-        let ps = Proc::spawn("player-service", cmd);
-        wait_ready(ps_admin, "player service");
-        let game_servers: Vec<GameServer> = ["gs-1", "gs-2"]
+        let mut ps = Proc::spawn("player-service", cmd);
+        wait_ready(&mut ps, ps_admin, "player service");
+        let mut game_servers: Vec<GameServer> = ["gs-1", "gs-2"]
             .into_iter()
             .map(|id| {
                 let (port, admin) = (free_port(), free_port());
@@ -191,8 +191,8 @@ impl Split {
                 }
             })
             .collect();
-        for gs in &game_servers {
-            wait_ready(gs.admin, "game server");
+        for gs in &mut game_servers {
+            wait_ready(&mut gs.proc, gs.admin, "game server");
         }
         Self {
             ps,
