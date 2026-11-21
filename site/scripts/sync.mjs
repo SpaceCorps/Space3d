@@ -45,6 +45,8 @@ canvas{position:fixed;inset:0;display:block;width:100vw!important;height:100vh!i
 <div id="status">loading… (first load downloads the engine)</div>
 <script type="module">
 import init from "./${e.id}.js";
+// ?webgl2 hides WebGPU so wgpu falls back to WebGL2 (to compare the two paths).
+if (new URLSearchParams(location.search).has("webgl2")) Object.defineProperty(navigator, "gpu", { value: undefined, configurable: true });
 const status = document.getElementById("status");
 init().then(() => { status.textContent = ${JSON.stringify(e.controls)}; setTimeout(() => status.classList.add("gone"), 10000); })
   .catch((err) => { status.textContent = "failed to start: " + err + " (needs WebGPU or WebGL2)"; console.error(err); });
