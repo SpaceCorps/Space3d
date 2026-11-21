@@ -167,9 +167,12 @@ fn all_in_one_quick_play_three_clients_then_drain_checkpoints_and_closes() {
                 }
             }
         }
-        s.should_exit()
+        // The server may be done before the clients have read the last frames off their
+        // sockets (the disconnect travels over real TCP): wait for what the clients see, not
+        // only for the server's exit.
+        s.should_exit() && notices.iter().all(|n| *n) && closed.iter().all(|c| *c)
     });
-    assert!(exited, "drain completed");
+    assert!(exited, "drain completed; warned: {notices:?}, disconnected: {closed:?}");
     assert!(notices.iter().all(|n| *n), "every client was warned: {notices:?}");
     assert!(
         closed.iter().all(|c| *c),

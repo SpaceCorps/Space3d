@@ -1,6 +1,7 @@
 [
   {"id": "web_editor", "title": "Editor", "blurb": "The full Space3d editor in your browser: hierarchy, inspector, gizmos, undo/redo, texture and model editors.", "controls": "click to pick · drag the gizmo · Space plays/pauses", "chrome": "editor", "path": "editor"},
   {"id": "hello_cube", "title": "Hello cube", "blurb": "The smallest complete game: a lit, rotating cube.", "controls": "Space pauses the rotation"},
+  {"id": "shield_demo", "title": "Shield demo", "blurb": "3D hull shields for SpaceCorps 2027: per-shot waves, piercing, break, a group bubble. Loads about 40 MB of ship models.", "controls": "click/Space fire · F Aegis · B break · R restore · 1–4 quality"},
   {"id": "web_demo", "title": "Web demo", "blurb": "4,096 instanced cubes in a single draw call.", "controls": "drag to orbit · wheel/pinch to zoom · tap to recolor · 1–3 patterns"},
   {"id": "pbr_showcase", "title": "PBR showcase", "blurb": "Materials, shadows and every blend mode in a top-down space scene.", "controls": "drag to look around · wheel/pinch to zoom"},
   {"id": "graphics_showcase", "title": "Graphics showcase", "blurb": "Every graphics feature in one reference scene.", "controls": "Q quality · 1 bloom · 2 shadows · 3 IBL · 4 distortion · C follow · arrows pan · wheel zoom"},

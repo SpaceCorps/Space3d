@@ -177,15 +177,30 @@ fn sample_shape(s: &LayerSim, seed: u32, scale: f32, outward: bool) -> (Vec3, Ve
 
 /// Position and velocity after `t` seconds under constant `gravity` and exponential `drag`
 /// (closed form; the pre-aging of particles emitted within a tick or synthesized by prewarm).
+///
+/// With `k = (1 − e^(−drag·t)) / drag` the position is `x + v·k + gravity·(t − k) / drag`. For a
+/// small `drag·t` that difference cancels catastrophically in `f32` (`t − k` is ~1e-9 of `t`,
+/// below the rounding of `k`, and the division by `drag` multiplies the error: a particle with
+/// drag 5.6e-5 and gravity 8.8 was born 47 m from its emitter), so below [`PRE_AGE_SERIES`] both
+/// are the series `k = t·(1 − x/2 + x²/6 − x³/24)` and
+/// `(t − k)/drag = t²·(1/2 − x/6 + x²/24 − x³/120)` with `x = drag·t` (truncation below 1e-7
+/// relative). `simulate.wgsl`'s `s3dp_pre_age` is the same sum in the same order.
 fn pre_age(x: Vec3, v: Vec3, gravity: Vec3, drag: f32, t: f32) -> (Vec3, Vec3) {
-    if drag > 1e-6 {
-        let e = (-drag * t).exp();
-        let k = (1.0 - e) / drag;
-        (x + v * k + gravity * ((t - k) / drag), v * e + gravity * k)
+    let u = drag * t;
+    let e = (-u).exp();
+    let (k, c) = if u < PRE_AGE_SERIES {
+        let kp = u.mul_add(u.mul_add(u.mul_add(-1.0 / 24.0, 1.0 / 6.0), -0.5), 1.0);
+        let cp = u.mul_add(u.mul_add(u.mul_add(-1.0 / 120.0, 1.0 / 24.0), -1.0 / 6.0), 0.5);
+        (t * kp, t * t * cp)
     } else {
-        (x + v * t + gravity * (0.5 * t * t), v + gravity * t)
-    }
+        let k = (1.0 - e) / drag;
+        (k, (t - k) / drag)
+    };
+    (x + v * k + gravity * c, v * e + gravity * k)
 }
+
+/// `drag·t` below which [`pre_age`] uses its series (the WGSL constant `S3DP_PRE_AGE_SERIES`).
+const PRE_AGE_SERIES: f32 = 0.05;
 
 /// The step of [`curl_noise`]'s differences, in lattice cells.
 const CURL_STEP: f32 = 0.1;
@@ -925,6 +940,44 @@ pub(crate) fn pack_bridges(
 
 #[cfg(test)]
 mod tests {
+    /// `pre_age` against an `f64` reference over the whole range of drags (zero, tiny, around the
+    /// series switch, large) and ages: no catastrophic cancellation (a drag of 5.6e-5 once put a
+    /// particle 47 m from its emitter).
+    #[test]
+    fn pre_age_matches_an_f64_reference_for_every_drag() {
+        let reference = |x: f64, v: f64, g: f64, drag: f64, t: f64| -> (f64, f64) {
+            if drag * t < 1e-9 {
+                (x + v * t + g * 0.5 * t * t, v + g * t)
+            } else {
+                let e = (-drag * t).exp();
+                let k = -(-drag * t).exp_m1() / drag;
+                (x + v * k + g * (t - k) / drag, v * e + g * k)
+            }
+        };
+        let mut worst = 0.0f64;
+        for drag in [0.0f32, 1e-8, 1e-6, 5.5877004e-5, 1e-3, 0.02, 0.1, 1.0, 5.0] {
+            for t in [0.0f32, 0.0125, 0.05, 0.3, 1.2, 4.0, 10.0] {
+                let (p, v) = pre_age(
+                    Vec3::new(1.0, 2.0, 3.0),
+                    Vec3::new(4.0, -5.0, 6.0),
+                    Vec3::new(0.0, -8.845601, 2.0),
+                    drag,
+                    t,
+                );
+                for (i, (x, vel, g)) in [(1.0f64, 4.0f64, 0.0f64), (2.0, -5.0, -8.845601), (3.0, 6.0, 2.0)]
+                    .into_iter()
+                    .enumerate()
+                {
+                    let (rp, rv) = reference(x, vel, g, f64::from(drag), f64::from(t));
+                    let (gp, gv) = ([p.x, p.y, p.z][i] as f64, [v.x, v.y, v.z][i] as f64);
+                    let scale = 1.0 + rp.abs().max(rv.abs());
+                    worst = worst.max(((gp - rp).abs() / scale).max((gv - rv).abs() / scale));
+                }
+            }
+        }
+        assert!(worst < 2e-4, "worst relative error {worst}");
+    }
+
     use super::*;
 
     /// The curl-noise flow has no sources or sinks: what flows into a small box flows out of it, where the noise the turbulence
