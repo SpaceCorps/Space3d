@@ -9,6 +9,9 @@ use tokio_tungstenite::tungstenite::http::{HeaderName, HeaderValue};
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
 
+/// How long a closing socket waits for the peer's answer.
+const CLOSE_LINGER: std::time::Duration = std::time::Duration::from_secs(1);
+
 pub(crate) struct Socket {
     inner: WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
 }
@@ -69,7 +72,21 @@ impl Socket {
         }
     }
 
+    /// Send the Close frame, then read (and drop) what the peer still sends until its own Close
+    /// frame, EOF or an error, for at most [`CLOSE_LINGER`]. Closing a TCP socket that holds
+    /// unread data makes the OS send a reset, and a reset discards what the peer has received
+    /// but not read yet: a client leaving a game server (which keeps streaming snapshots to
+    /// it) lost its own last packets, `Leave` included, and the server kept its slot for the
+    /// whole resume window.
     pub async fn close(&mut self) {
         let _ = self.inner.close(None).await;
+        let _ = tokio::time::timeout(CLOSE_LINGER, async {
+            while let Some(Ok(message)) = self.inner.next().await {
+                if matches!(message, TMessage::Close(_)) {
+                    break;
+                }
+            }
+        })
+        .await;
     }
 }

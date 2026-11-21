@@ -162,7 +162,8 @@ fn room_and_client_over_a_real_websocket() {
     // Orderly leave: the room frees the slot.
     client.resources.expect_mut::<NetClient>().disconnect();
     let deadline = Instant::now() + Duration::from_secs(5);
-    while room.resources.expect::<NetServer>().connected_count() > 0 && Instant::now() < deadline {
+    // Until the slot is freed, not merely until the link dropped.
+    while !room.resources.expect::<NetServer>().clients().is_empty() && Instant::now() < deadline {
         for ev in ws.drain() {
             let link = LinkId(ev.client().0);
             match ev {
