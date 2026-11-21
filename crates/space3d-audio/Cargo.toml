@@ -10,6 +10,9 @@ publish.workspace = true
 [dependencies]
 space3d-core.workspace = true
 kira.workspace = true
-glam.workspace = true
+# `mint`: kira takes its listener/emitter positions as `Into<mint::Vector3>`; this crate relies on
+# glam converting to it, and must not depend on kira happening to enable the feature on the same
+# glam version (in a fresh dependency resolution kira can pick a newer glam than the engine's).
+glam = { workspace = true, features = ["mint"] }
 tracing.workspace = true
 thiserror.workspace = true
