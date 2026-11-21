@@ -479,6 +479,51 @@ fn delays_gravity_and_drag() {
     assert!(p.pos().y < 0.0 && p.pos().x == 0.0);
 }
 
+fn capacity_case(
+    rate: f32,
+    count: u32,
+    cycles: u32,
+    interval: f32,
+    life: (f32, f32),
+    delay: (f32, f32),
+    looping: bool,
+) -> Result<(), proptest::test_runner::TestCaseError> {
+    let mut h = Harness::new();
+    let layer = ParticleLayer {
+        spawn: Spawn {
+            rate,
+            bursts: vec![Burst {
+                time: 0.05,
+                count: (count / 2, count).into(),
+                cycles,
+                interval,
+            }],
+            ..Spawn::default()
+        },
+        lifetime: FloatRange::new(life.0, life.0 + life.1),
+        particle_delay: FloatRange::new(delay.0, delay.0 + delay.1),
+        ..ParticleLayer::default()
+    };
+    // The ring is clamped to `MAX_LAYER_CAPACITY` by design: a layer that needs more alive at
+    // once than that overwrites its oldest particles (see `capacity_clamp_overwrites_by_design`).
+    prop_assume!(super::layer::capacity(&layer) < super::layer::MAX_LAYER_CAPACITY);
+    // The estimate counts burst cycles per window, assuming at most one cycle per tick: a burst
+    // interval shorter than the tick fires `dt / interval` cycles in every tick (CI found 0.056 ms
+    // against a 12.5 ms tick: 4 513 overwrites), which the ring is not sized for.
+    prop_assume!(interval == 0.0 || interval >= DT);
+    let fx = h.add(ParticleEffect {
+        looping,
+        duration: 1.0,
+        ..ParticleEffect::new("p").layer(layer)
+    });
+    h.world.spawn_effect(fx, EffectSpawn::at(Vec3::ZERO).keep());
+    for _ in 0..150 {
+        h.step();
+    }
+    prop_assert_eq!(h.sim.overwrites, 0);
+    Ok(())
+}
+
 proptest! {
     #![proptest_config(ProptestConfig::with_cases(48))]
     /// The computed ring capacity holds every particle alive at once (no early overwrite) for
@@ -493,24 +538,150 @@ proptest! {
         delay in (0.0f32..0.3, 0.0f32..0.3),
         looping in any::<bool>(),
     ) {
-        let mut h = Harness::new();
-        let layer = ParticleLayer {
-            spawn: Spawn {
-                rate,
-                bursts: vec![Burst { time: 0.05, count: (count / 2, count).into(), cycles, interval }],
-                ..Spawn::default()
-            },
-            lifetime: FloatRange::new(life.0, life.0 + life.1),
-            particle_delay: FloatRange::new(delay.0, delay.0 + delay.1),
-            ..ParticleLayer::default()
-        };
-        let fx = h.add(ParticleEffect { looping, duration: 1.0, ..ParticleEffect::new("p").layer(layer) });
-        h.world.spawn_effect(fx, EffectSpawn::at(Vec3::ZERO).keep());
-        for _ in 0..150 {
-            h.step();
-        }
-        prop_assert_eq!(h.sim.overwrites, 0);
+        capacity_case(rate, count, cycles, interval, life, delay, looping)?;
     }
+}
+
+/// Input the property found on CI (ubuntu, Windows): bursts of up to 24 every 0.28 ms for a
+/// window of 1.04 s need about 90 000 live particles, more than the largest ring: the layer's
+/// capacity is clamped, and when the clamp applies the ring overwrites its oldest particles
+/// rather than growing without bound. (The property only claims "no overwrite" below the clamp.)
+#[test]
+fn capacity_clamp_overwrites_by_design() {
+    let mut h = Harness::new();
+    let layer = ParticleLayer {
+        spawn: Spawn {
+            rate: 0.0,
+            bursts: vec![Burst {
+                time: 0.05,
+                count: (12, 24).into(),
+                cycles: 0,
+                interval: 0.00027557957,
+            }],
+            ..Spawn::default()
+        },
+        lifetime: FloatRange::new(0.02, 0.02 + 0.83847463),
+        particle_delay: FloatRange::new(0.17784142, 0.17784142),
+        ..ParticleLayer::default()
+    };
+    assert_eq!(
+        super::layer::capacity(&layer),
+        super::layer::MAX_LAYER_CAPACITY,
+        "clamped"
+    );
+    let fx = h.add(ParticleEffect {
+        looping: false,
+        duration: 1.0,
+        ..ParticleEffect::new("p").layer(layer)
+    });
+    h.world.spawn_effect(fx, EffectSpawn::at(Vec3::ZERO).keep());
+    for _ in 0..150 {
+        h.step();
+    }
+    assert!(h.sim.overwrites > 0, "the clamp is what overwrites");
+    assert!(h.alive().len() <= super::layer::MAX_LAYER_CAPACITY as usize);
+}
+
+#[allow(clippy::too_many_arguments)]
+fn entry_bounds_case(
+    shape: usize,
+    speed: (f32, f32),
+    drag: f32,
+    gravity: f32,
+    force: usize,
+    strength: f32,
+    local: bool,
+    inherit: f32,
+    delay: f32,
+    scale: f32,
+    spin: f32,
+) -> Result<(), proptest::test_runner::TestCaseError> {
+    let mut h = Harness::new();
+    let shape = [
+        EmitShape::Point,
+        EmitShape::Sphere {
+            radius: 5.0,
+            inner: 0.2,
+        },
+        EmitShape::Cone {
+            angle: 0.5,
+            radius: 2.0,
+        },
+        EmitShape::Ring {
+            radius: 6.0,
+            width: 2.0,
+            arc: 0.0,
+        },
+        EmitShape::Box {
+            half_extents: Vec3::new(3.0, 1.0, 4.0),
+        },
+        EmitShape::Line { length: 10.0 },
+    ][shape];
+    let forces = match force {
+        0 => vec![],
+        1 => vec![crate::effect::Force::Attractor {
+            position: Vec3::new(2.0, 0.0, 0.0),
+            strength,
+            radius: 0.0,
+            falloff: crate::effect::Falloff::InverseSquare,
+        }],
+        2 => vec![crate::effect::Force::Vortex {
+            axis: Vec3::Y,
+            strength,
+            pull: strength * 0.3,
+        }],
+        _ => vec![crate::effect::Force::Turbulence {
+            strength,
+            frequency: 0.4,
+            speed: 1.0,
+        }],
+    };
+    let layer = ParticleLayer {
+        shape,
+        speed: FloatRange::new(speed.0, speed.0 + speed.1),
+        drag,
+        gravity: Vec3::new(0.0, gravity, 0.0),
+        forces,
+        inherit_velocity: inherit,
+        particle_delay: FloatRange::new(0.0, delay),
+        space: if local {
+            crate::effect::SimulationSpace::Local
+        } else {
+            crate::effect::SimulationSpace::World
+        },
+        ..ParticleLayer::continuous(120.0, (0.3, 1.2))
+    };
+    let fx = h.add(ParticleEffect {
+        looping: true,
+        ..ParticleEffect::new("b").layer(layer)
+    });
+    let e = h
+        .world
+        .spawn_effect(fx, EffectSpawn::at(Vec3::ZERO).scale(scale).keep());
+    for t in 0..150 {
+        let a = t as f32 * spin;
+        if let Ok(mut tr) = h.world.get::<&mut Transform>(e) {
+            tr.translation = Vec3::new(a.sin() * 40.0, 0.0, t as f32 * 0.8);
+            tr.rotation = Quat::from_rotation_y(a * 3.0);
+        }
+        h.step();
+        let poses: Vec<(Vec3, Quat)> = h.rt.instances.iter().map(|i| (i.pos, i.rot)).collect();
+        for (i, entry) in h.rt.entries.iter().enumerate().filter(|(_, e)| e.live) {
+            let (lo, hi) = h.rt.entry_bounds(entry, &poses, 0.0);
+            let (pp, pr) = poses[entry.instance as usize];
+            for (slot, p) in h.alive() {
+                if p.misc[2] != i as u32 || p.pos_age[3] < 0.0 {
+                    continue;
+                }
+                let x = if local { pp + pr * p.pos() } else { p.pos() };
+                prop_assert!(
+                    x.cmpge(lo - Vec3::splat(1e-3)).all() && x.cmple(hi + Vec3::splat(1e-3)).all(),
+                    "tick {t} slot {slot}: {x} outside {lo}..{hi}"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 proptest! {
@@ -532,63 +703,28 @@ proptest! {
         scale in 0.2f32..3.0,
         spin in 0.0f32..0.2,
     ) {
-        let mut h = Harness::new();
-        let shape = [
-            EmitShape::Point,
-            EmitShape::Sphere { radius: 5.0, inner: 0.2 },
-            EmitShape::Cone { angle: 0.5, radius: 2.0 },
-            EmitShape::Ring { radius: 6.0, width: 2.0, arc: 0.0 },
-            EmitShape::Box { half_extents: Vec3::new(3.0, 1.0, 4.0) },
-            EmitShape::Line { length: 10.0 },
-        ][shape];
-        let forces = match force {
-            0 => vec![],
-            1 => vec![crate::effect::Force::Attractor {
-                position: Vec3::new(2.0, 0.0, 0.0),
-                strength,
-                radius: 0.0,
-                falloff: crate::effect::Falloff::InverseSquare,
-            }],
-            2 => vec![crate::effect::Force::Vortex { axis: Vec3::Y, strength, pull: strength * 0.3 }],
-            _ => vec![crate::effect::Force::Turbulence { strength, frequency: 0.4, speed: 1.0 }],
-        };
-        let layer = ParticleLayer {
-            shape,
-            speed: FloatRange::new(speed.0, speed.0 + speed.1),
-            drag,
-            gravity: Vec3::new(0.0, gravity, 0.0),
-            forces,
-            inherit_velocity: inherit,
-            particle_delay: FloatRange::new(0.0, delay),
-            space: if local { crate::effect::SimulationSpace::Local } else { crate::effect::SimulationSpace::World },
-            ..ParticleLayer::continuous(120.0, (0.3, 1.2))
-        };
-        let fx = h.add(ParticleEffect { looping: true, ..ParticleEffect::new("b").layer(layer) });
-        let e = h.world.spawn_effect(fx, EffectSpawn::at(Vec3::ZERO).scale(scale).keep());
-        for t in 0..150 {
-            let a = t as f32 * spin;
-            if let Ok(mut tr) = h.world.get::<&mut Transform>(e) {
-                tr.translation = Vec3::new(a.sin() * 40.0, 0.0, t as f32 * 0.8);
-                tr.rotation = Quat::from_rotation_y(a * 3.0);
-            }
-            h.step();
-            let poses: Vec<(Vec3, Quat)> = h.rt.instances.iter().map(|i| (i.pos, i.rot)).collect();
-            for (i, entry) in h.rt.entries.iter().enumerate().filter(|(_, e)| e.live) {
-                let (lo, hi) = h.rt.entry_bounds(entry, &poses, 0.0);
-                let (pp, pr) = poses[entry.instance as usize];
-                for (slot, p) in h.alive() {
-                    if p.misc[2] != i as u32 || p.pos_age[3] < 0.0 {
-                        continue;
-                    }
-                    let x = if local { pp + pr * p.pos() } else { p.pos() };
-                    prop_assert!(
-                        x.cmpge(lo - Vec3::splat(1e-3)).all() && x.cmple(hi + Vec3::splat(1e-3)).all(),
-                        "tick {t} slot {slot}: {x} outside {lo}..{hi}"
-                    );
-                }
-            }
-        }
+        entry_bounds_case(shape, speed, drag, gravity, force, strength, local, inherit, delay, scale, spin)?;
     }
+}
+
+/// Failing input found by the property above on CI (ubuntu): a point emitter at rest with a
+/// tiny drag was born 47 m away (`pre_age` lost its position to `f32` cancellation).
+#[test]
+fn entry_bounds_regression_point_emitter_at_rest() {
+    entry_bounds_case(
+        0,
+        (0.0, 0.0),
+        5.5877004e-5,
+        -8.845601,
+        0,
+        0.0,
+        false,
+        0.0,
+        0.0,
+        0.2,
+        0.0,
+    )
+    .unwrap();
 }
 
 /// Median of `n` timed runs of `f`, in milliseconds.

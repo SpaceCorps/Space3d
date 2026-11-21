@@ -287,6 +287,11 @@ pub(crate) fn window_ticks(window: f32, dt: f32) -> u32 {
 /// largest throttle (`max_rate_scale^ThrottleResponse::rate`, at least 1) ×
 /// window × 1.05, the bursts that can overlap within the window, the distance rate at 100 u/s,
 /// clamped to 1..=65 536; `ParticleLayer::capacity` overrides it.
+///
+/// Burst cycles are counted per window, which assumes a burst `interval` of at least one tick:
+/// a shorter interval fires several cycles in every tick (all of them spawn), so the ring is
+/// undersized and overwrites its oldest particles (the ring's fallback); set
+/// `ParticleLayer::capacity` for such a layer.
 pub(crate) fn capacity(l: &ParticleLayer) -> u32 {
     capacity_at(l, 1.0)
 }

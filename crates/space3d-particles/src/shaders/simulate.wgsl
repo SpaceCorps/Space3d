@@ -48,13 +48,24 @@ struct S3dpTick {
 @group(0) @binding(4) var<uniform> tick: S3dpTick;
 
 // `cpu::pre_age`: closed-form motion under gravity and drag for `t` seconds.
+// Below `drag * t` of S3DP_PRE_AGE_SERIES `(t - k) / drag` is a series: the difference cancels in
+// f32 (see the Rust function).
+const S3DP_PRE_AGE_SERIES: f32 = 0.05;
 fn s3dp_pre_age(x: vec3<f32>, v: vec3<f32>, g: vec3<f32>, drag: f32, t: f32) -> mat2x3<f32> {
-    if (drag > 1e-6) {
-        let e = exp(-drag * t);
-        let k = (1.0 - e) / drag;
-        return mat2x3<f32>(x + v * k + g * ((t - k) / drag), v * e + g * k);
+    let u = drag * t;
+    let e = exp(-u);
+    var k: f32;
+    var c: f32;
+    if (u < S3DP_PRE_AGE_SERIES) {
+        let kp = fma(u, fma(u, fma(u, -1.0 / 24.0, 1.0 / 6.0), -0.5), 1.0);
+        let cp = fma(u, fma(u, fma(u, -1.0 / 120.0, 1.0 / 24.0), -1.0 / 6.0), 0.5);
+        k = t * kp;
+        c = t * t * cp;
+    } else {
+        k = (1.0 - e) / drag;
+        c = (t - k) / drag;
     }
-    return mat2x3<f32>(x + v * t + g * (0.5 * t * t), v + g * t);
+    return mat2x3<f32>(x + v * k + g * c, v * e + g * k);
 }
 
 fn s3dp_hash3(x: i32, y: i32, z: i32, seed: u32) -> f32 {
