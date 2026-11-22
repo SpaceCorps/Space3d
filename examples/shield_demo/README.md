@@ -20,6 +20,7 @@ A 3D shield for SpaceCorps 2027, as a Space3d example. Every ship gets a shield 
   - Volleys: 2 or 4 bolts from the shooter's real gun positions.
   - Wear: one wear per volley, then break and regeneration.
   - Targets: missed shots and immune targets.
+  - Siphon: the target's shield is sucked in towards the hit point, and the drained shield streams back to the shooter as packets. When the drain is yours (*Your shots*, at the other player or the mob), the probe leaves from your ship. Each packet then sends a teal wave over your shield, from where it enters (the side facing the target), and your shield takes in 7% once per drain (with wear; under the Aegis, into its reserve). If the Aegis goes up or down while the packets fly, they go to the shield you have when they land.
 - **The Aegis:** a proposal, not a game rule yet. For 8 s, the carrier's whole shield becomes a bubble around its group, and its hull has no shield. The bubble takes its share of each hit from outside, and the rest goes on to the target. It has a reserve, a break, an end, a cooldown and fatigue.
 - **The engine's quality tiers:** `GraphicsQuality::apply` and `ParticleSettings::for_quality`. The starting tier is `GraphicsQuality::recommended_for(renderer)`.
 - **A French / English panel** (egui): ships, scene, target, weapon, shooter, wear, colours, shield look, sound, speed, orbit camera.
@@ -79,7 +80,7 @@ assets/
 Environment variables, or URL parameters on the web, script a run:
 
 - **Weapon:** `SHIELD_WEAPON=x4`
-- **Target:** `SHIELD_TARGET=player`
+- **Target:** `SHIELD_TARGET=player`. `SHIELD_WEAPON=siphon SHIELD_TARGET=mob` shows your Siphon's packets coming back into your shield (lower your shield and turn wear on in the panel to see the 7% gain).
 - **Aegis:** `SHIELD_AEGIS_AT=<tick>`
 - **State report:** `SHIELD_LOG_FRAME=<tick>` prints one line of state in the console, and in `window.__shield` on the web.
 
@@ -100,6 +101,7 @@ The simulation tests load the test ship synchronously, then drive the simulation
 - a volley making waves;
 - wear down to a break, and restoring;
 - the Aegis taking hits and ending;
+- your Siphon refilling your shield, bringing it back from 0, and refilling the Aegis;
 - determinism.
 
 Another test checks that every committed model loads with its baked envelope.
@@ -107,4 +109,5 @@ Another test checks that every committed model loads with its baked envelope.
 ## Known limits
 
 - **Overlapping layers:** where the hull envelope folds over itself, two layers can add up. Nodes outside the Opaque phase must not write depth, so there is no depth pre-pass.
+- **Where your Siphon's packets enter:** in the game your ship faces its target, so they come in at the nose. Here the ships turn slowly and don't face anything: they come in on the side facing the target. Under the Aegis they go to the bubble, towards the target, even when the target is inside it.
 - **Bolts at 60 Hz:** bolts move on the fixed tick. Their drawn position is extrapolated to the displayed time.

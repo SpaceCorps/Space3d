@@ -18,7 +18,9 @@ struct Shield {
     d: vec4<f32>,         // hole radius, reveal (0..1, 2 = full), z min, z max
     e: vec4<f32>,         // burst, impact count, 0, 0
     imp: array<vec4<f32>, 16>,   // xyz local point, w start time (< 0: free)
-    impx: array<vec4<f32>, 16>,  // x strength (< 0: flash only), y share that pierces, z kind (0 shot, 1 siphon, 2 blast), w width ×
+    // x strength (< 0: flash only), y share that pierces, z kind (0 shot, 1 siphon, 2 blast,
+    // 3 siphon gain: y packet count, w time between packets), w width × (siphon: drain time)
+    impx: array<vec4<f32>, 16>,
 }
 @group(2) @binding(0) var<uniform> sh: Shield;
 
@@ -136,6 +138,8 @@ fn sh_fs(i: VOut, front: bool) -> vec4<f32> {
     var hole_rim = 0.0;
     var teal = 0.0;
     var drain = 0.0;
+    var fill = 0.0;
+    let gain_life = wave_life * 1.4;
     let n_imp = u32(sh.e.y);
     for (var k = 0u; k < 16u; k = k + 1u) {
         if (k >= n_imp) { break; }
@@ -143,8 +147,44 @@ fn sh_fs(i: VOut, front: bool) -> vec4<f32> {
         if (t0 < 0.0) { continue; }
         let ix = sh.impx[k];
         let siphon = ix.z > 0.5 && ix.z < 1.5;
+        let gain = ix.z > 2.5;
         let age = time - t0;
-        if (age < 0.0 || age > select(wave_life, ix.w + 0.35, siphon)) { continue; }
+        var life = wave_life;
+        if (siphon) { life = ix.w + 0.35; }
+        if (gain) { life = gain_life + ix.w * max(ix.y - 1.0, 0.0); }
+        if (age < 0.0 || age > life) { continue; }
+        if (gain) {
+            // your siphon's packets come in: from where each enters, a teal wave runs over the
+            // whole shield, which glows a little brighter behind it
+            let d = sh_surf_dist(i.local, sh.imp[k].xyz);
+            let n = u32(clamp(ix.y, 1.0, 10.0));
+            // fast enough to reach the far side before it fades (the bubble is much larger)
+            let far = select(2.2, 3.1416, sh.c.w < 0.5) * sh.radii.w;
+            let gspeed = max(wave_speed, far / (0.75 * gain_life));
+            // thin enough that close packets still read as separate rings
+            let gw = max(clamp(0.5 * gspeed * ix.w, 0.35 * wave_width, wave_width), 1e-4);
+            let amp = max(ix.x, 0.0) * 1.2 * sqrt(max(wave_width, 1e-4) / gw) / sqrt(f32(n));
+            let fg = d / (wave_width * 1.4);
+            let entry = exp(-fg * fg);
+            var ring = 0.0;
+            var behind = 0.0;
+            var flashes = 0.0;
+            for (var j = 0u; j < 10u; j = j + 1u) {
+                if (j >= n) { break; }
+                let aj = age - f32(j) * ix.w;
+                if (aj < 0.0 || aj > gain_life) { continue; }
+                let kj = 1.0 - aj / gain_life;
+                let r = gspeed * aj;
+                let xg = (d - r) / gw;
+                ring = ring + exp(-xg * xg) * kj * amp;
+                behind = max(behind, (1.0 - smoothstep(r - gw, r + gw, d)) * kj * kj);
+                // each packet that lands lights its entry point
+                flashes = flashes + entry * exp(-aj * 12.0);
+            }
+            teal = teal + ring * (0.5 + 1.5 * sh.b.y * hx) + min(flashes, 2.0) * 0.9;
+            fill = max(fill, behind * 0.45);
+            continue;
+        }
         let sf = abs(ix.x);
         let s = max(ix.x, 0.0);   // s < 0: flash only, no wave
         let ww = wave_width * ix.w;
@@ -185,6 +225,7 @@ fn sh_fs(i: VOut, front: bool) -> vec4<f32> {
         flash = flash + fl;
     }
     rest = rest * (1.0 - drain);
+    teal = teal + rest * fill * 2.0;
     let hex_on = sh.b.y * hx;
     var I = rest + (waves * (0.8 + 2.2 * hex_on) + reveal * hex_on * 0.9) * net + flash * 2.0 * sh.c.z + hole_rim * 2.2;
     let ze = (sh.d.y - zk) / 0.035;   // ze*ze, not pow(ze, 2): pow of a negative base is NaN

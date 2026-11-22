@@ -139,7 +139,7 @@ space3d::main!(build);
 #[cfg(test)]
 mod tests {
     use super::*;
-    use game::{AegisState, State, Target};
+    use game::{AegisState, Role, State, Target};
     use space3d::render::GraphicsQuality;
 
     /// A headless app with the demo, every hull already loaded (the engine's test ship), so the
@@ -230,6 +230,109 @@ mod tests {
         let g = game(&mut app);
         assert_eq!(g.aegis.state, AegisState::Off);
         assert_eq!(g.state, State::Up);
+    }
+
+    /// Fires your Siphon at the ship with `role`, with wear and no regeneration; `prepare` runs
+    /// before the shot. Returns the target's index.
+    fn your_siphon_at(app: &mut App, role: Role, prepare: impl FnOnce(&mut Game)) -> usize {
+        let g = game(app);
+        g.s.wear = true;
+        g.s.regen = 1000.0;
+        g.s.weapon = catalog::WEAPONS
+            .iter()
+            .position(|w| w.key == "siphon")
+            .expect("the Siphon");
+        prepare(g);
+        let target = g.units.iter().position(|u| u.role == role).expect("the target");
+        g.fire(None, Some(target));
+        target
+    }
+
+    fn gain_waves(list: &[game::Impact]) -> Vec<Vec3> {
+        list.iter().filter(|m| m.kind == 3.0).map(|m| m.p).collect()
+    }
+
+    /// Your Siphon leaves from your ship: the mob's shield is drained, and the packets come back
+    /// into your shield on the side facing the mob, which takes in 7 %.
+    #[test]
+    fn your_siphon_refills_your_shield() {
+        let mut app = demo();
+        let mob = your_siphon_at(&mut app, Role::Foe, |g| g.s.pct = 50.0);
+        app.step_ticks(120);
+        let g = game(&mut app);
+        assert!(
+            g.units[mob].impacts.iter().any(|m| m.kind == 1.0),
+            "a drain on the mob's shield"
+        );
+        assert_eq!(g.s.pct, 57.0);
+        let waves = gain_waves(&g.units[0].impacts);
+        assert_eq!(waves.len(), 1, "one gain wave on your shield");
+        // the mob is on +x and the ships don't turn in the tests
+        assert!(waves[0].x > 0.0, "the packets enter on the mob's side: {:?}", waves[0]);
+        assert_eq!(g.state, State::Up);
+    }
+
+    /// Your shield at 0: the Siphon's gain brings it back with what it took in.
+    #[test]
+    fn your_siphon_brings_your_shield_back() {
+        let mut app = demo();
+        your_siphon_at(&mut app, Role::Foe, |g| {
+            g.s.pct = 0.0;
+            g.break_shield(None);
+        });
+        app.step_ticks(150);
+        let g = game(&mut app);
+        assert_eq!(g.s.pct, 7.0);
+        assert_eq!(g.state, State::Up);
+    }
+
+    /// Under the Aegis your shield is the bubble: the gain wave is on the bubble, not on the
+    /// hull, and the gain goes to its reserve.
+    #[test]
+    fn your_siphon_refills_the_aegis() {
+        let mut app = demo();
+        {
+            let g = game(&mut app);
+            g.s.pct = 50.0;
+            g.aegis_at = Some(g.scene_frames + 1);
+        }
+        app.step_ticks(30);
+        assert_eq!(game(&mut app).aegis.state, AegisState::On);
+        your_siphon_at(&mut app, Role::Foe, |_| {});
+        app.step_ticks(120);
+        let g = game(&mut app);
+        assert_eq!(gain_waves(&g.aegis.impacts).len(), 1, "the wave is on the bubble");
+        assert!(gain_waves(&g.units[0].impacts).is_empty(), "and not on the hidden hull");
+        assert_eq!(g.aegis.reserve, 57.0);
+        assert_eq!(g.s.pct, 57.0);
+    }
+
+    /// The Aegis goes up while your Siphon is under way to the other player: right after the
+    /// shot (the bubble lets your probe out and doesn't drain your own reserve), or after the
+    /// drain, while the packets fly (they go to the bubble, the shield you have when they land).
+    #[test]
+    fn the_aegis_deployed_under_your_siphon() {
+        for after in [1, 30] {
+            let mut app = demo();
+            let ally = your_siphon_at(&mut app, Role::Ally, |g| {
+                g.s.pct = 50.0;
+                g.aegis_at = Some(g.scene_frames + after);
+            });
+            app.step_ticks(120);
+            let g = game(&mut app);
+            assert_eq!(g.aegis.state, AegisState::On);
+            assert!(
+                g.units[ally].impacts.iter().any(|m| m.kind == 1.0),
+                "the probe drained the other player (Aegis after {after} ticks)"
+            );
+            assert_eq!(
+                gain_waves(&g.aegis.impacts).len(),
+                1,
+                "the wave is on the bubble (Aegis after {after} ticks)"
+            );
+            assert!(gain_waves(&g.units[0].impacts).is_empty());
+            assert_eq!(g.aegis.reserve, 57.0, "nothing taken from the bubble, 7 % in");
+        }
     }
 
     /// Same inputs, same result: the simulation only depends on the fixed ticks, not on the

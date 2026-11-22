@@ -431,6 +431,19 @@ fn split_text(g: &Game) -> String {
     } else {
         lines.push("A single shot, from the shooter's center.".to_string());
     }
+    if w.kind == WeaponKind::Siphon && g.s.view_self && g.units.len() > 1 {
+        lines.push(
+            g.tr(
+                "Votre Siphon sur l'autre joueur ou le mob part de votre vaisseau. Le bouclier pris \
+                 revient en paquets : le vôtre gagne 7 % (avec l'usure, ou dans la réserve de \
+                 l'Égide), et chaque paquet y lance une onde.",
+                "Your Siphon at the other player or the mob leaves from your ship. The shield it \
+                 takes comes back as packets: yours takes in 7% (with wear, or into the Aegis \
+                 reserve), and each packet sends a wave over it.",
+            )
+            .to_string(),
+        );
+    }
     for (i, u) in g.units.iter().enumerate() {
         let name = match u.role {
             Role::Main => g.tr("Vous", "You").to_string(),

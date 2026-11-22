@@ -27,6 +27,12 @@ const AEGIS_DEPLOY: f32 = 0.4;
 const AEGIS_RETRACT: f32 = 0.4;
 const AEGIS_FATIGUE: f32 = 20.0;
 const SIPHON_COL: [f32; 3] = [0.12, 1.5, 1.25];
+/// A drain's packets leave one after the other over this time (s)…
+const SIPHON_SPREAD: f32 = 0.2;
+/// …and each flies for this long (s).
+const SIPHON_FLIGHT: f32 = 0.3;
+/// What your Siphon gives your shield (%): x1, what a drain takes from yours with wear.
+const SIPHON_GAIN: f32 = 7.0;
 const BLAST_COL: [f32; 3] = [3.2, 1.6, 0.5];
 const HULL_SPARK_COL: [f32; 3] = [3.0, 1.1, 0.25];
 const FOV_Y: f32 = 35.0;
@@ -411,12 +417,14 @@ fn build_hull(name: &str, glb: Vec<u8>, sbe_bytes: Option<Vec<u8>>) -> Result<Hu
 
 // ---------------------------------------------------------------- simulation state
 
+/// A wave on a shield, sent to the shader as is. `kind`: 0 a shot, 1 a siphon drain, 2 a blast,
+/// 3 your siphon's gain (`leak` is then the number of packets and `w` the time between them).
 pub struct Impact {
-    p: Vec3,
+    pub(crate) p: Vec3,
     t: f32,
     s: f32,
     leak: f32,
-    kind: f32,
+    pub(crate) kind: f32,
     w: f32,
     vid: u64,
 }
@@ -470,6 +478,8 @@ struct Bolt {
     rem: Option<f32>,
     aegis_done: bool,
     pre_aegis: bool,
+    /// Fired by your ship (your Siphon at a neighbour), not by a shooter out of view.
+    from_you: bool,
     travel: f32,
     cast: Option<Cast>,
     color: Vec3,
@@ -483,8 +493,19 @@ struct Packet {
     unit: usize,
     from: Option<Vec3>,
     to: Vec3,
+    /// Your own Siphon: where the packet enters your shield (it follows your ship).
+    home: Option<Home>,
+    /// The first packet of your drain carries the gain and the number of packets.
+    gain: Option<usize>,
     t0: f32,
     dur: f32,
+}
+
+/// A point on your shield, in its own space: the hull shield, or the Aegis bubble while it is up.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Home {
+    Hull(Vec3),
+    Aegis(Vec3),
 }
 
 struct BreakFx {
@@ -503,7 +524,7 @@ pub struct Aegis {
     pub full: f32,
     pub absorb: f32,
     pub radii: Vec3,
-    impacts: Vec<Impact>,
+    pub(crate) impacts: Vec<Impact>,
     cd_end: f32,
     fatigue_end: f32,
     pub message: String,
@@ -1284,11 +1305,19 @@ impl Game {
         };
         let aegis_on = self.aegis.state != AegisState::Off;
         let r = (w * 3.2).max(if aegis_on { self.aegis.radii.x * 2.0 } else { 0.0 });
-        let dir = Vec3::new(a.cos(), 0.0, a.sin());
+        let mut dir = Vec3::new(a.cos(), 0.0, a.sin());
         let c0 = self.units[unit].pos;
         let mut origin = dir * r + c0;
         origin.y = self.rnd(-0.04, 0.08) * w;
-        if aegis_on {
+        let weapon = self.s.weapon.min(WEAPONS.len() - 1);
+        let wk = WEAPONS[weapon].kind;
+        // your Siphon at a neighbour leaves from your ship, so the shield it takes comes back to
+        // a shield you can see; every other shot comes from a shooter out of view
+        let from_you = wk == WeaponKind::Siphon && self.s.view_self && unit != 0;
+        if from_you {
+            origin = self.units[0].pos;
+            dir = norm_or(Vec3::new(origin.x - c0.x, 0.0, origin.z - c0.z), Vec3::X);
+        } else if aegis_on {
             // the shooter is always outside, far from the wall
             for _ in 0..20 {
                 if Vec2::new(origin.x, origin.z).length() >= self.aegis.radii.x * 1.8 {
@@ -1304,8 +1333,6 @@ impl Game {
                 self.rnd(-0.08, 0.08) * size.y,
                 self.rnd(-0.16, 0.16) * size.z,
             );
-        let weapon = self.s.weapon.min(WEAPONS.len() - 1);
-        let wk = WEAPONS[weapon].kind;
         // a laser volley hits 80 % of the time at Laser tech level 1
         let miss = self.s.miss && matches!(wk, WeaponKind::Laser | WeaponKind::Siphon) && self.rnd(0.0, 1.0) < 0.2;
         if miss {
@@ -1378,8 +1405,10 @@ impl Game {
                 passed: false,
                 leak: 0.0,
                 rem: None,
-                aegis_done: false,
+                // fired from inside the Aegis: the bubble lets it out
+                aegis_done: from_you,
                 pre_aegis: false,
+                from_you,
                 travel: 0.0,
                 cast: None,
                 color: Vec3::from_array(base) * dim,
@@ -1656,7 +1685,9 @@ impl Game {
         through
     }
 
-    fn siphon_packets(&mut self, from: Vec3, to: Vec3, unit: usize, delay: f32) {
+    /// The drained shield streams back to the shooter: to `to` (a shooter out of view), or to
+    /// `home` on your shield when the drain is yours.
+    fn siphon_packets(&mut self, from: Vec3, to: Vec3, unit: usize, delay: f32, home: Option<Home>) {
         let n = 3 + (self.fx_rnd(0.0, 8.0) as usize).min(7);
         let loc = self.units[unit].model.inverse().transform_point3(from);
         for i in 0..n {
@@ -1665,9 +1696,94 @@ impl Game {
                 unit,
                 from: None,
                 to,
-                t0: self.sim + delay + i as f32 * 0.2 / (n as f32 - 1.0),
-                dur: 0.3,
+                home,
+                gain: (home.is_some() && i == 0).then_some(n),
+                t0: self.sim + delay + i as f32 * SIPHON_SPREAD / (n as f32 - 1.0),
+                dur: SIPHON_FLIGHT,
             });
+        }
+    }
+
+    /// Where your Siphon's packets enter your shield: on the line from the drained point to your
+    /// ship, so on the side that faces the target. While the Aegis is up, your shield is the
+    /// bubble: on the bubble, towards the target.
+    fn siphon_home(&self, from: Vec3) -> Home {
+        let u = &self.units[0];
+        if self.aegis_up() {
+            let r = self.aegis.radii;
+            let l = self.aegis_matrix().inverse().transform_point3(from);
+            let k = (l / r).length();
+            return Home::Aegis(if k > 1e-6 { l / k } else { Vec3::new(r.x, 0.0, 0.0) });
+        }
+        // the shield's own space is centred on the ship: towards the origin is towards the ship
+        let o = u.model.inverse().transform_point3(from);
+        match ray_tris(o, -o, &u.asset.shell_tris) {
+            Some((t, _)) => Home::Hull(o - o * t),
+            None => {
+                let r = u.asset.radii * MARGIN;
+                let k = (o / r).length();
+                Home::Hull(if k > 1e-6 { o / k } else { Vec3::new(r.x, 0.0, 0.0) })
+            }
+        }
+    }
+
+    /// A point of your shield in the world at `now`.
+    fn home_world(&self, home: Home, now: f32) -> Vec3 {
+        match home {
+            Home::Hull(p) => self.units.first().map_or(p, |u| u.model.transform_point3(p)),
+            Home::Aegis(p) => {
+                if self.units.is_empty() {
+                    p
+                } else {
+                    self.aegis_matrix_at(now).transform_point3(p)
+                }
+            }
+        }
+    }
+
+    /// Your Siphon's first packet reaches your shield. It takes in what the drain took (x1: the
+    /// 7 % a drain takes from your shield with wear), up to its maximum, and the regeneration is
+    /// not delayed. Each packet then sends a teal wave from where it enters over the whole
+    /// shield (one impact from `t`, its landing time: the shader draws one wave per packet).
+    fn siphon_gain(&mut self, ctx: &mut SystemCtx, home: Home, n: usize, t: f32) {
+        if self.units.is_empty() {
+            return;
+        }
+        let wave = |p: Vec3| Impact {
+            p,
+            t,
+            s: 0.9,
+            leak: n as f32,
+            kind: 3.0,
+            w: SIPHON_SPREAD / (n.max(2) - 1) as f32,
+            vid: 0,
+        };
+        match home {
+            Home::Hull(p) => self.add_impact(0, wave(p)),
+            Home::Aegis(p) => {
+                if self.aegis_up() {
+                    self.aegis.impacts.push(wave(p));
+                    while self.aegis.impacts.len() > MAX_IMPACTS {
+                        self.aegis.impacts.remove(0);
+                    }
+                }
+            }
+        }
+        let point = self.home_world(home, self.sim);
+        self.hit_light(point, true, SIPHON_COL, 0.6);
+        if self.aegis_up() {
+            self.aegis.reserve = (self.aegis.reserve + SIPHON_GAIN).min(100.0);
+            self.aegis.full = self.aegis.full.max(self.aegis.reserve);
+            self.s.pct = self.aegis.reserve;
+        } else if self.s.wear {
+            if matches!(self.state, State::Down | State::Breaking) {
+                // a shield at 0 comes back with what was taken in
+                self.s.pct = SIPHON_GAIN;
+                self.restore_shield(false);
+                self.sfx(ctx, "shield_buff_on", point, 0.8);
+            } else {
+                self.s.pct = (self.s.pct + SIPHON_GAIN).min(100.0);
+            }
         }
     }
 
@@ -1710,7 +1826,8 @@ impl Game {
                 self.hit_light(point, true, SIPHON_COL, 1.0);
                 self.impact(ctx, unit, point, 0.9, 0.0, 1.0, t, 1.0, b.vid);
                 if unit != 0 || self.state != State::Breaking {
-                    self.siphon_packets(point, b.o, unit, t);
+                    let home = b.from_you.then(|| self.siphon_home(point));
+                    self.siphon_packets(point, b.o, unit, t, home);
                 }
                 return false;
             }
@@ -2149,7 +2266,7 @@ impl Game {
             add(self, 0.9, 0.0, 1.0, delay);
             self.aegis_wear(b.vid, 1.0);
             self.sfx(ctx, "hit_shield", point, 0.55);
-            self.siphon_packets(point, b.o, 0, delay);
+            self.siphon_packets(point, b.o, 0, delay, None);
             if self.aegis.reserve <= 0.0 {
                 self.aegis_break(ctx, local);
             }
@@ -2404,8 +2521,28 @@ impl Game {
         self.step_bolts(ctx, dt);
         let sim = self.sim;
         let mut packets = std::mem::take(&mut self.packets);
-        packets.retain(|p| sim < p.t0 + p.dur);
+        // the Aegis went up or down since the drain: your packets go to the shield you have now
+        let aegis_up = self.aegis_up();
+        for p in &mut packets {
+            if let Some(home) = p.home
+                && matches!(home, Home::Aegis(_)) != aegis_up
+                && let Some(u) = self.units.get(p.unit)
+            {
+                p.home = Some(self.siphon_home(u.model.transform_point3(p.loc)));
+            }
+        }
+        let mut gains = Vec::new();
+        packets.retain(|p| {
+            let flying = sim < p.t0 + p.dur;
+            if !flying && let (Some(home), Some(n)) = (p.home, p.gain) {
+                gains.push((home, n, p.t0 + p.dur));
+            }
+            flying
+        });
         self.packets = packets;
+        for (home, n, t) in gains {
+            self.siphon_gain(ctx, home, n, t);
+        }
         self.aegis_step(ctx);
         if self.state == State::Breaking && self.brk.as_ref().is_none_or(|b| sim - self.state_t > b.dur + 0.1) {
             self.state = State::Down;
@@ -2924,9 +3061,10 @@ impl Game {
             }
             let Some(unit) = self.units.get(p.unit) else { continue };
             let from = *p.from.get_or_insert_with(|| unit.model.transform_point3(p.loc));
+            let to = p.home.map_or(p.to, |h| self.home_world(h, sim));
             let k = t * t * (3.0 - 2.0 * t);
-            let at = from.lerp(p.to, k);
-            let d = norm_or(p.to - from, Vec3::X);
+            let at = from.lerp(to, k);
+            let d = norm_or(to - from, Vec3::X);
             let tail = at - d * (w * 0.012);
             streaks.extend_from_slice(&[
                 tail.x,
@@ -2997,6 +3135,7 @@ impl Bolt {
             rem: self.rem,
             aegis_done: self.aegis_done,
             pre_aegis: self.pre_aegis,
+            from_you: self.from_you,
             travel: self.travel,
             cast: None,
             color: self.color,
