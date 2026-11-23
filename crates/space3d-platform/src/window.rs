@@ -263,11 +263,17 @@ pub(crate) fn lift_is_a_tap(down: glam::Vec2, up: glam::Vec2, slop: f32) -> bool
 
 /// Whether the game wants typed text now (resource). `space3d-ui` sets `wanted` while one of
 /// its text fields has the focus; on Android and iOS the runner shows the on-screen keyboard
-/// while it is set and hides it after. A game with text fields of its own writes it itself.
+/// while it is set and hides it after. On a desktop the runner turns the OS input method (IME,
+/// for Chinese, Japanese and Korean) on while it is set, unless the field is a password field.
+/// A game with text fields of its own writes it itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TextInput {
     /// A text field has the focus.
     pub wanted: bool,
+    /// The field with the focus is a password field: a desktop's input method stays off for it
+    /// (what is typed into a password field is never composed or offered candidates). Phones show
+    /// their keyboard all the same.
+    pub password: bool,
 }
 
 /// Window/application lifecycle events (`Events<PlatformEvent>`).

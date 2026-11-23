@@ -59,6 +59,7 @@
 mod android;
 pub mod background;
 pub mod gamepad;
+mod ime;
 mod input;
 #[cfg(target_os = "ios")]
 pub mod ios;

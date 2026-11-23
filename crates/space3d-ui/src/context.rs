@@ -525,6 +525,7 @@ pub(crate) fn end_frame(sys: &mut SystemCtx, overlay: &Arc<Mutex<EguiOverlay>>) 
     let cursor_changed = new_cursor != e.cursor_icon || !e.cursor_sent;
     e.cursor_icon = new_cursor;
     let ppp = output.pixels_per_point;
+    let password = password_field(output.platform_output.ime);
     let span = part("ui::end_frame.tessellate");
     let primitives = e.ctx.tessellate(output.shapes, ppp);
     drop(span);
@@ -550,6 +551,18 @@ pub(crate) fn end_frame(sys: &mut SystemCtx, overlay: &Arc<Mutex<EguiOverlay>>) 
             e.cursor_sent = true;
         }
     }
+    // The field with the focus is a password field: no input method for it (a desktop's runner
+    // reads `TextInput::password` with `wanted`; both are this pass's).
+    let text_input = sys.resources.init::<space3d_platform::TextInput>();
+    if text_input.password != password {
+        text_input.password = password;
+    }
+}
+
+/// Whether the text field that owns the keyboard in this pass (`PlatformOutput::ime`, which a
+/// focused `TextEdit` sets) is a password field.
+fn password_field(ime: Option<egui::output::IMEOutput>) -> bool {
+    ime.is_some_and(|ime| ime.purpose == egui::IMEPurpose::Password)
 }
 
 /// egui's cursor as the window's (`None` hides the pointer), as egui-winit maps it.

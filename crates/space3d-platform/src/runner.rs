@@ -22,6 +22,7 @@
 //! loss or suspension releases every held key and button ([`Input::release_all`]; mouse buttons
 //! as cancels).
 
+use crate::ime::ImeState;
 use crate::input::{Input, KeyEvent, MouseButton, TouchPhase};
 use crate::layout::LayoutWatch;
 use crate::os_buttons::ButtonReconciler;
@@ -41,6 +42,14 @@ use winit::window::{CursorGrabMode, Window, WindowId};
 /// Pixels per "line" when converting pixel-precise scrolling (trackpads) to lines.
 const PIXELS_PER_LINE: f32 = 40.0;
 
+/// A window of a desktop (Windows, macOS, Linux, the BSDs): not a phone, not the web. The input
+/// method support (`crate::ime`) is for these; the phones' keyboard path below is the old one.
+const DESKTOP: bool = cfg!(not(any(
+    target_os = "android",
+    target_os = "ios",
+    target_arch = "wasm32"
+)));
+
 pub(crate) struct WinitRunner {
     app: App,
     settings: WindowPlugin,
@@ -56,6 +65,8 @@ pub(crate) struct WinitRunner {
     surface_retry: SurfaceRetry,
     layout_watch: LayoutWatch,
     buttons: ButtonReconciler,
+    /// The OS input method (IME) of a desktop window (`crate::ime`).
+    ime: ImeState,
     /// The pads of the OS (`crate::gamepad`), polled before every frame.
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     pads: crate::gamepad::Backend,
@@ -219,6 +230,7 @@ pub(crate) fn run(app: App, settings: WindowPlugin) {
         surface_retry: SurfaceRetry::default(),
         layout_watch: LayoutWatch::default(),
         buttons: ButtonReconciler::default(),
+        ime: ImeState::default(),
         #[cfg(any(
             target_os = "windows",
             target_os = "macos",
@@ -569,6 +581,20 @@ impl WinitRunner {
                 if self.keyboard_again == 0 && wanted {
                     window.set_ime_allowed(true);
                 }
+            }
+        }
+        // Desktops: the OS input method (IME) is on while a text field has the focus, and not for
+        // a password field (`crate::ime`).
+        if DESKTOP {
+            let text = self
+                .app
+                .resources
+                .get::<crate::window::TextInput>()
+                .copied()
+                .unwrap_or_default();
+            if let Some(on) = self.ime.step(&text).allow {
+                tracing::debug!(target: "ime", on, "set_ime_allowed");
+                window.set_ime_allowed(on);
             }
         }
         // Android: how much of the window the keyboard covers, asked every few frames while a
