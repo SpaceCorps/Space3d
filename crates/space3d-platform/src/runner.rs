@@ -213,6 +213,11 @@ pub(crate) fn run(app: App, settings: WindowPlugin) {
         }
     };
     event_loop.set_control_flow(FRAME_FLOW);
+    // Desktops: `WindowPlugin::ime`, and the environment's `SPACE3D_NO_IME` over it.
+    let ime = DESKTOP && crate::ime::resolve_enabled(settings.ime, |k| std::env::var(k).ok());
+    if DESKTOP && !ime {
+        tracing::info!(target: "ime", "input methods (IME) are off ({} or WindowPlugin::ime)", crate::ime::ENV_NO_IME);
+    }
     // iOS: the scene delegate's class must exist before UIKit starts (`crate::ios`).
     #[cfg(target_os = "ios")]
     crate::ios::register();
@@ -230,7 +235,7 @@ pub(crate) fn run(app: App, settings: WindowPlugin) {
         surface_retry: SurfaceRetry::default(),
         layout_watch: LayoutWatch::default(),
         buttons: ButtonReconciler::default(),
-        ime: ImeState::new(DESKTOP),
+        ime: ImeState::new(ime),
         #[cfg(any(
             target_os = "windows",
             target_os = "macos",

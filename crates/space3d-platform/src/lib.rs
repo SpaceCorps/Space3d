@@ -73,7 +73,7 @@ mod web;
 mod window;
 
 pub use background::{background_mode, set_background_mode};
-pub use ime::{ImeArea, ImeEvent};
+pub use ime::{ENV_NO_IME, ImeArea, ImeEvent};
 pub use input::{
     ActionMap, ActionState, ActionValue, Binding, ButtonState, Gamepad, GamepadAxis, GamepadButton, GamepadChange,
     Input, InputPlugin, KeyCode, KeyEvent, MouseButton, MouseButtonCause, MouseButtonEvent, Touch, TouchGesture,

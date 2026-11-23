@@ -39,6 +39,12 @@ pub struct WindowPlugin {
     /// platform default. Ignored on macOS (the Dock shows the app bundle's icon), the web and
     /// mobile.
     pub icon: Option<WindowIcon>,
+    /// Desktops (Windows, macOS, Linux): turn the OS input method (IME, for typing Chinese,
+    /// Japanese and Korean) on while a text field has the focus, and pass the composition and
+    /// the caret's place on (`Input::ime_events`, `TextInput`). Default `true`; the environment
+    /// variable `SPACE3D_NO_IME=1` switches it off whatever this says. Off, a desktop window is
+    /// as it was before the engine knew input methods. Phones and the web are not affected.
+    pub ime: bool,
 }
 
 /// An RGBA8 window icon (see [`WindowPlugin::icon`]).
@@ -123,6 +129,7 @@ impl Default for WindowPlugin {
             exit_on_close: true,
             touch_as_mouse: false,
             icon: None,
+            ime: true,
         }
     }
 }
@@ -351,6 +358,25 @@ mod safe_area_tests {
             bottom: 63,
         };
         assert_eq!(right.turned_for_landscape((2622, 1206)), right);
+    }
+}
+
+#[cfg(test)]
+mod ime_tests {
+    use super::*;
+
+    #[test]
+    fn the_input_method_support_is_on_unless_the_game_says_so() {
+        assert!(WindowPlugin::default().ime);
+        assert!(WindowPlugin::titled("a game").ime);
+        // A game's literal with the rest defaulted keeps it.
+        let plugin = WindowPlugin {
+            width: 640,
+            ..Default::default()
+        };
+        assert!(plugin.ime);
+        assert!(!TextInput::default().wanted && !TextInput::default().password);
+        assert_eq!(TextInput::default().caret, None);
     }
 }
 

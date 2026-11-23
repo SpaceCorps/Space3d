@@ -27,11 +27,20 @@
 //!    cancels a composition, the Enter that commits the letters and the Backspace that deletes
 //!    one of them must not also close a chat, send it or delete the text before the composition
 //!    (`ImeState::swallows_key`).
+//!
+//! **Kill switch:** the environment variable [`ENV_NO_IME`] (`SPACE3D_NO_IME=1`) or
+//! `WindowPlugin::ime = false` leaves the window as it was before the engine knew input methods:
+//! no IME on a desktop, no event of it, a commit (there is none then) typed text.
 
 use crate::input::Input;
 use crate::layout::{LogicalKey, NamedKey};
 use crate::window::TextInput;
 use std::ops::Range;
+
+/// Environment variable that switches the desktop input method support off (`1`, `true`,
+/// `yes` or `on`; anything else, or unset, leaves it on). The other switch is
+/// `WindowPlugin::ime`.
+pub const ENV_NO_IME: &str = "SPACE3D_NO_IME";
 
 /// What an input method tells the app (`Input::ime_events`, one frame's worth in order).
 ///
@@ -123,6 +132,14 @@ impl ImeArea {
             height: px(size[1].max(0.0)).max(1.0) as u32,
         })
     }
+}
+
+/// Whether the input method support is on: `flag` (`WindowPlugin::ime`) and no `SPACE3D_NO_IME`
+/// in the environment (`get` reads a variable).
+pub(crate) fn resolve_enabled(flag: bool, get: impl Fn(&str) -> Option<String>) -> bool {
+    let off =
+        get(ENV_NO_IME).is_some_and(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"));
+    flag && !off
 }
 
 /// Whether the window's input method should change: `Some(on)` when a text field wants text
@@ -423,6 +440,26 @@ mod tests {
             ..caret(area(10))
         };
         assert_eq!(state.step(&flying), ImeStep::default());
+    }
+
+    // ---- the kill switch ----------------------------------------------------------------
+
+    #[test]
+    fn the_kill_switch_is_the_flag_or_the_environment() {
+        let env = |v: Option<&'static str>| move |k: &str| (k == ENV_NO_IME).then(|| v.map(String::from)).flatten();
+        assert!(resolve_enabled(true, env(None)), "on by default");
+        assert!(!resolve_enabled(false, env(None)), "WindowPlugin::ime = false");
+        for off in ["1", "true", "TRUE", " yes ", "on"] {
+            assert!(!resolve_enabled(true, env(Some(off))), "SPACE3D_NO_IME={off:?}");
+        }
+        for on in ["0", "", "false", "no", "off", "2"] {
+            assert!(
+                resolve_enabled(true, env(Some(on))),
+                "SPACE3D_NO_IME={on:?} leaves it on"
+            );
+        }
+        // Another variable is none of its business.
+        assert!(resolve_enabled(true, |k: &str| (k == "CI").then(|| "1".to_string())));
     }
 
     #[test]
