@@ -185,6 +185,9 @@ pub(crate) struct ImeState {
     composing: bool,
     /// What the window was last told as the caret's area (`None`: nothing since it was turned on).
     area: Option<ImeArea>,
+    /// A composition started, or the input method did: tell the window its area once more even if
+    /// it did not change (an input method may reset its windows when its mode or language does).
+    resend: bool,
     /// `TextInput::interrupt` of the last step: only a change from false to true interrupts.
     interrupted: bool,
 }
@@ -197,13 +200,15 @@ impl ImeState {
             on: false,
             composing: false,
             area: None,
+            resend: false,
             interrupted: false,
         }
     }
 
     /// What to tell the window after a frame, given what the game asks (`TextInput`). Nothing
     /// when the support is off. The window's area is forgotten whenever the input method is
-    /// turned on (a context made new knows none), so the next call sends it.
+    /// turned on (a context made new knows none), so the next call sends it. While a composition
+    /// is going on the area is not followed (see below).
     pub(crate) fn step(&mut self, text: &TextInput) -> ImeStep {
         let mut step = ImeStep::default();
         if !self.enabled {
@@ -231,7 +236,21 @@ impl ImeState {
             step.cancel = true;
         }
         if self.on {
-            step.area = ime_area_to_send(text.caret, self.area);
+            let again = std::mem::take(&mut self.resend);
+            step.area = if self.composing {
+                // The candidate list stays where the composition began. egui puts the caret at
+                // the END of the preedit, so it moves right with every letter, and a list that
+                // followed it would slide along the pinyin: the window is told once more what it
+                // was told before the composition (or the caret, if it was told none).
+                match self.area {
+                    Some(told) => again.then_some(told),
+                    None => text.caret,
+                }
+            } else if again {
+                text.caret
+            } else {
+                ime_area_to_send(text.caret, self.area)
+            };
             if step.area.is_some() {
                 self.area = step.area;
             }
@@ -239,16 +258,16 @@ impl ImeState {
         step
     }
 
-    /// Note an event of the input method. A composition that starts has the area sent again:
-    /// an input method may place its windows by what it was last told and reset it when its
-    /// mode or language changes.
+    /// Note an event of the input method. A composition that starts has the area sent again
+    /// (the one from before it): an input method may place its windows by what it was last told
+    /// and reset it when its mode or language changes.
     pub(crate) fn event(&mut self, event: &ImeEvent) {
         match event {
-            ImeEvent::Enabled => self.area = None,
+            ImeEvent::Enabled => self.resend = true,
             ImeEvent::Preedit { text, .. } => {
                 let composing = !text.is_empty();
                 if composing && !self.composing {
-                    self.area = None;
+                    self.resend = true;
                 }
                 self.composing = composing;
             }
@@ -511,6 +530,30 @@ mod tests {
         state.event(&preedit(""));
         state.event(&preedit("h"));
         assert_eq!(state.step(&at).area, Some(area(10)));
+    }
+
+    #[test]
+    fn the_candidate_list_stays_where_the_composition_began() {
+        let mut state = ImeState::new(true);
+        state.step(&caret(area(10)));
+        // A composition starts, and the caret moves right with every letter of the preedit (egui
+        // puts it at the end): the window is told where it began, then nothing while it grows.
+        state.event(&preedit("n"));
+        assert_eq!(state.step(&caret(area(18))).area, Some(area(10)));
+        state.event(&preedit("ni"));
+        assert_eq!(state.step(&caret(area(26))).area, None);
+        state.event(&preedit("nih"));
+        assert_eq!(state.step(&caret(area(34))).area, None);
+        // It ends: the caret is after the committed text, and the window is told.
+        state.event(&ImeEvent::Commit(NIHAO.into()));
+        assert_eq!(state.step(&caret(area(40))).area, Some(area(40)));
+        assert_eq!(state.step(&caret(area(40))).area, None);
+        // A composition in a field the window was told no area of (no caret yet): the caret.
+        let mut state = ImeState::new(true);
+        state.step(&field(true, false));
+        state.event(&preedit("n"));
+        assert_eq!(state.step(&caret(area(18))).area, Some(area(18)));
+        assert_eq!(state.step(&caret(area(26))).area, None);
     }
 
     #[test]

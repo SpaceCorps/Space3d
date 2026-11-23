@@ -449,7 +449,11 @@ Linux has no CJK font bundled either: the game ships one or loads the system's
    in points) and sets `TextInput::caret` in physical pixels (points times the pass's pixels
    per point; `ImeArea`). The runner calls `Window::set_ime_cursor_area` when it changes, and
    once more when a composition starts or the IME comes back on (an IME may reset its windows
-   when its mode or language changes). The caret's rectangle and not the field's, because X11
+   when its mode or language changes). **While a composition is going on the area is not
+   followed:** egui puts the caret at the *end* of the preedit, so it moves right with every
+   letter, and a candidate list that followed it would slide along the pinyin. The window keeps
+   the area from before the composition (the caret where the preedit starts) and is told the new
+   caret when the composition ends. The caret's rectangle and not the field's, because X11
    and Wayland take a position and a cursor rectangle; the field's (`IMEOutput::rect`) is a
    one-line change.
 4. **Keys the IME processed are not the app's.** On Windows the IME sees a key first and winit
