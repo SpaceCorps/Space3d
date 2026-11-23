@@ -525,7 +525,7 @@ pub(crate) fn end_frame(sys: &mut SystemCtx, overlay: &Arc<Mutex<EguiOverlay>>) 
     let cursor_changed = new_cursor != e.cursor_icon || !e.cursor_sent;
     e.cursor_icon = new_cursor;
     let ppp = output.pixels_per_point;
-    let password = password_field(output.platform_output.ime);
+    let (password, caret) = ime_text_input(output.platform_output.ime, ppp);
     let span = part("ui::end_frame.tessellate");
     let primitives = e.ctx.tessellate(output.shapes, ppp);
     drop(span);
@@ -551,18 +551,35 @@ pub(crate) fn end_frame(sys: &mut SystemCtx, overlay: &Arc<Mutex<EguiOverlay>>) 
             e.cursor_sent = true;
         }
     }
-    // The field with the focus is a password field: no input method for it (a desktop's runner
-    // reads `TextInput::password` with `wanted`; both are this pass's).
+    // What a desktop's input method needs to know of the focused field, from this pass (as
+    // `wanted`): a password field gets none, and the others open their candidate list at the caret.
     let text_input = sys.resources.init::<space3d_platform::TextInput>();
     if text_input.password != password {
         text_input.password = password;
     }
+    if text_input.caret != caret {
+        text_input.caret = caret;
+    }
 }
 
-/// Whether the text field that owns the keyboard in this pass (`PlatformOutput::ime`, which a
-/// focused `TextEdit` sets) is a password field.
-fn password_field(ime: Option<egui::output::IMEOutput>) -> bool {
-    ime.is_some_and(|ime| ime.purpose == egui::IMEPurpose::Password)
+/// What the text field that owns the keyboard in a pass (`PlatformOutput::ime`, which a focused
+/// `TextEdit` sets) tells the platform: whether it is a password field, and where its caret is
+/// in physical pixels (`pixels_per_point` the pass's; the caret's rectangle, or the field's when
+/// that is no rectangle). A password field has no caret to tell, and nothing focused has none.
+fn ime_text_input(
+    ime: Option<egui::output::IMEOutput>,
+    pixels_per_point: f32,
+) -> (bool, Option<space3d_platform::ImeArea>) {
+    let Some(ime) = ime else {
+        return (false, None);
+    };
+    if ime.purpose == egui::IMEPurpose::Password {
+        return (true, None);
+    }
+    let area = |r: egui::Rect| {
+        space3d_platform::ImeArea::from_points([r.min.x, r.min.y], [r.width(), r.height()], pixels_per_point)
+    };
+    (false, area(ime.cursor_rect).or_else(|| area(ime.rect)))
 }
 
 /// egui's cursor as the window's (`None` hides the pointer), as egui-winit maps it.
@@ -606,4 +623,67 @@ pub fn winit_cursor(icon: egui::CursorIcon) -> Option<space3d_platform::CursorIc
         E::ZoomIn => W::ZoomIn,
         E::ZoomOut => W::ZoomOut,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ime(purpose: egui::IMEPurpose, rect: egui::Rect, cursor_rect: egui::Rect) -> egui::output::IMEOutput {
+        egui::output::IMEOutput {
+            purpose,
+            rect,
+            cursor_rect,
+            should_interrupt_composition: false,
+        }
+    }
+
+    fn rect(x: f32, y: f32, w: f32, h: f32) -> egui::Rect {
+        egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(w, h))
+    }
+
+    #[test]
+    fn the_caret_goes_to_the_platform_in_physical_pixels() {
+        let field = rect(50.0, 280.0, 300.0, 24.0);
+        let caret = rect(100.0, 284.0, 2.0, 16.0);
+        let out = ime(egui::IMEPurpose::Normal, field, caret);
+        let at = |ppp| ime_text_input(Some(out), ppp);
+        let area = |x, y, width, height| Some(space3d_platform::ImeArea { x, y, width, height });
+        assert_eq!(at(1.0), (false, area(100, 284, 2, 16)));
+        assert_eq!(at(1.5), (false, area(150, 426, 3, 24)));
+        assert_eq!(at(2.0), (false, area(200, 568, 4, 32)));
+    }
+
+    #[test]
+    fn a_password_field_is_told_and_has_no_caret() {
+        let out = ime(
+            egui::IMEPurpose::Password,
+            rect(50.0, 280.0, 300.0, 24.0),
+            rect(100.0, 284.0, 2.0, 16.0),
+        );
+        assert_eq!(ime_text_input(Some(out), 1.0), (true, None));
+    }
+
+    #[test]
+    fn no_field_no_caret() {
+        assert_eq!(ime_text_input(None, 1.0), (false, None));
+    }
+
+    #[test]
+    fn the_fields_rectangle_stands_in_for_a_caret_that_is_none() {
+        let field = rect(50.0, 280.0, 300.0, 24.0);
+        let nan = rect(f32::NAN, 0.0, 1.0, 1.0);
+        let out = ime(egui::IMEPurpose::Terminal, field, nan);
+        let (password, caret) = ime_text_input(Some(out), 1.0);
+        assert!(!password, "a terminal field is no password field");
+        assert_eq!(
+            caret,
+            Some(space3d_platform::ImeArea {
+                x: 50,
+                y: 280,
+                width: 300,
+                height: 24
+            })
+        );
+    }
 }

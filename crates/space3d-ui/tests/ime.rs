@@ -11,8 +11,13 @@ use space3d_ui::*;
 /// A one-line field bound to the `String` resource, focused on the first pass (a password field
 /// shows dots and must never get an input method).
 fn field_app(password: bool) -> App {
+    field_app_at(1.0, password)
+}
+
+/// The same at `ppp` physical pixels to a point (a display scaled to 150 or 200 %).
+fn field_app_at(ppp: f32, password: bool) -> App {
     let mut app = App::new();
-    app.add_plugin(UiPlugin::deterministic());
+    app.add_plugin(UiPlugin::deterministic().with_pixels_per_point(ppp));
     app.insert_resource(String::new());
     app.add_ui_system(move |ctx, sys| {
         egui::Window::new("Text").fixed_pos([10.0, 10.0]).show(ctx, |ui| {
@@ -51,6 +56,63 @@ fn leaving_a_password_field_clears_the_flags() {
     app.step_ticks(2);
     let at = *app.resources.expect::<TextInput>();
     assert!(!at.wanted && !at.password, "no field has the focus: {at:?}");
+    assert_eq!(at.caret, None);
+}
+
+#[test]
+fn a_password_field_has_no_caret_to_tell() {
+    assert_eq!(app_caret(&field_app(true)), None);
+}
+
+fn app_caret(app: &App) -> Option<space3d_platform::ImeArea> {
+    app.resources.expect::<TextInput>().caret
+}
+
+#[test]
+fn the_ui_tells_the_platform_where_the_caret_is_in_physical_pixels() {
+    for ppp in [1.0f32, 1.5, 2.0] {
+        let mut app = field_app_at(ppp, false);
+        let caret = app_caret(&app).expect("the focused field's caret");
+        // The window is placed at (10, 10) points: the caret is inside the field, in pixels.
+        assert!(
+            caret.x as f32 >= 10.0 * ppp && (caret.x as f32) < 400.0 * ppp,
+            "x {} at {ppp}",
+            caret.x
+        );
+        assert!(caret.y as f32 >= 10.0 * ppp, "y {} at {ppp}", caret.y);
+        assert!(
+            caret.height as f32 >= 8.0 * ppp,
+            "a text line high: {} at {ppp}",
+            caret.height
+        );
+        // It follows the text: a longer composition moves it right.
+        frame(&mut app, [preedit("nihao")]);
+        let moved = app_caret(&app).expect("caret");
+        assert!(moved.x > caret.x, "{moved:?} after {caret:?}");
+        assert_eq!(moved.y, caret.y);
+    }
+}
+
+#[test]
+fn the_caret_is_in_points_times_the_scale() {
+    // The same field at two scales is the same place in points (the layout snaps to pixels, so
+    // it is not exactly twice the pixels): the platform gets pixels, not points.
+    let one = app_caret(&field_app_at(1.0, false)).expect("caret");
+    let two = app_caret(&field_app_at(2.0, false)).expect("caret");
+    let points = |pixels: i32, ppp: f32| pixels as f32 / ppp;
+    assert!(
+        (points(two.x, 2.0) - points(one.x, 1.0)).abs() <= 1.0,
+        "{one:?} {two:?}"
+    );
+    assert!(
+        (points(two.y, 2.0) - points(one.y, 1.0)).abs() <= 1.0,
+        "{one:?} {two:?}"
+    );
+    assert!(
+        (two.height as f32 / 2.0 - one.height as f32).abs() <= 1.0,
+        "{one:?} {two:?}"
+    );
+    assert!(two.x > one.x && two.y > one.y, "pixels, not points: {one:?} {two:?}");
 }
 
 fn preedit(text: &str) -> ImeEvent {

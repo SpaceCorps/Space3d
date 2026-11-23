@@ -604,6 +604,13 @@ impl WinitRunner {
                     .init::<Input>()
                     .inject_ime(crate::ime::ImeEvent::Disabled);
             }
+            // The candidate list opens next to the caret (not at the window's corner).
+            if let Some(a) = step.area {
+                window.set_ime_cursor_area(
+                    winit::dpi::PhysicalPosition::new(a.x, a.y),
+                    winit::dpi::PhysicalSize::new(a.width, a.height),
+                );
+            }
         }
         // Android: how much of the window the keyboard covers, asked every few frames while a
         // text field wants text (the keyboard slides in over some), and 0 otherwise.

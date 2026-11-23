@@ -274,6 +274,10 @@ pub struct TextInput {
     /// (what is typed into a password field is never composed or offered candidates). Phones show
     /// their keyboard all the same.
     pub password: bool,
+    /// Where the text caret of that field is, in physical pixels of the window, for a desktop
+    /// input method to open its candidate list next to (`space3d-ui` sets it from egui's
+    /// `PlatformOutput::ime`). `None`: no field has the focus, or it is a password field.
+    pub caret: Option<crate::ime::ImeArea>,
 }
 
 /// Window/application lifecycle events (`Events<PlatformEvent>`).

@@ -19,7 +19,10 @@
 //! 2. **The composition is forwarded** ([`ImeEvent`], `Input::ime_events`): `space3d-ui` makes
 //!    egui's `Event::Ime` of them, so a `TextEdit` shows the preedit underlined and takes the
 //!    commit once. A commit is **not** also typed text (`Input::text`): egui would enter it twice.
-//! 3. **Keys the IME processed are not keys of the app**: on Windows the IME gets a key before
+//! 3. **The candidate list opens at the text caret** (`TextInput::caret`, [`ImeArea`], physical
+//!    pixels): the runner passes it to `Window::set_ime_cursor_area` when it changes, and again
+//!    when a composition starts or the IME comes back on.
+//! 4. **Keys the IME processed are not keys of the app**: on Windows the IME gets a key before
 //!    the app and winit still reports it, with the logical key [`NamedKey::Process`]; the Esc that
 //!    cancels a composition, the Enter that commits the letters and the Backspace that deletes
 //!    one of them must not also close a chat, send it or delete the text before the composition
@@ -88,6 +91,40 @@ fn char_range(text: &str, start: usize, end: usize) -> Range<usize> {
     a.min(b)..a.max(b)
 }
 
+/// Where the text caret is, in physical pixels of the window (`TextInput::caret`): the
+/// rectangle an input method keeps clear and opens its candidate list next to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ImeArea {
+    /// Left edge.
+    pub x: i32,
+    /// Top edge.
+    pub y: i32,
+    /// Width, at least 1.
+    pub width: u32,
+    /// Height, at least 1.
+    pub height: u32,
+}
+
+impl ImeArea {
+    /// A rectangle of `size` at `min` in UI points as physical pixels: every number times
+    /// `pixels_per_point`, rounded (so a caret that moves by less than a pixel is no change).
+    /// `None` for a number that is not finite or a scale that is not positive.
+    pub fn from_points(min: [f32; 2], size: [f32; 2], pixels_per_point: f32) -> Option<Self> {
+        let all = [min[0], min[1], size[0], size[1], pixels_per_point];
+        if !all.iter().all(|v| v.is_finite()) || pixels_per_point <= 0.0 {
+            return None;
+        }
+        let px = |v: f32| (v * pixels_per_point).round();
+        // (`as` saturates: a rectangle far outside the window is still a rectangle)
+        Some(Self {
+            x: px(min[0]) as i32,
+            y: px(min[1]) as i32,
+            width: px(size[0].max(0.0)).max(1.0) as u32,
+            height: px(size[1].max(0.0)).max(1.0) as u32,
+        })
+    }
+}
+
 /// Whether the window's input method should change: `Some(on)` when a text field wants text
 /// (`wanted`) that is not a password (`password`) and that differs from `current`, `None` when
 /// nothing changes. A pure function of three booleans, so the same frame twice asks nothing
@@ -97,11 +134,18 @@ pub(crate) fn ime_switch(wanted: bool, password: bool, current: bool) -> Option<
     (on != current).then_some(on)
 }
 
+/// The area to pass to the window: `wanted` when it is one and differs from the `applied` one.
+pub(crate) fn ime_area_to_send(wanted: Option<ImeArea>, applied: Option<ImeArea>) -> Option<ImeArea> {
+    wanted.filter(|w| applied != Some(*w))
+}
+
 /// What the runner does to the window after a frame: see `ImeState::step`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct ImeStep {
     /// `Window::set_ime_allowed(on)`.
     pub allow: Option<bool>,
+    /// `Window::set_ime_cursor_area` here.
+    pub area: Option<ImeArea>,
     /// The input method was turned off while it composed: the app is told with an
     /// `ImeEvent::Disabled`, or the preedit would stay in the text field as plain text.
     pub cancel: bool,
@@ -116,6 +160,8 @@ pub(crate) struct ImeState {
     on: bool,
     /// A composition is going on (a preedit with text came, nothing ended it yet).
     composing: bool,
+    /// What the window was last told as the caret's area (`None`: nothing since it was turned on).
+    area: Option<ImeArea>,
 }
 
 impl ImeState {
@@ -125,11 +171,13 @@ impl ImeState {
             enabled,
             on: false,
             composing: false,
+            area: None,
         }
     }
 
     /// What to tell the window after a frame, given what the game asks (`TextInput`). Nothing
-    /// when the support is off.
+    /// when the support is off. The window's area is forgotten whenever the input method is
+    /// turned on (a context made new knows none), so the next call sends it.
     pub(crate) fn step(&mut self, text: &TextInput) -> ImeStep {
         let mut step = ImeStep::default();
         if !self.enabled {
@@ -137,20 +185,35 @@ impl ImeState {
         }
         if let Some(on) = ime_switch(text.wanted, text.password, self.on) {
             self.on = on;
+            self.area = None;
             step.allow = Some(on);
             if !on && self.composing {
                 self.composing = false;
                 step.cancel = true;
             }
         }
+        if self.on {
+            step.area = ime_area_to_send(text.caret, self.area);
+            if step.area.is_some() {
+                self.area = step.area;
+            }
+        }
         step
     }
 
-    /// Note an event of the input method.
+    /// Note an event of the input method. A composition that starts has the area sent again:
+    /// an input method may place its windows by what it was last told and reset it when its
+    /// mode or language changes.
     pub(crate) fn event(&mut self, event: &ImeEvent) {
         match event {
-            ImeEvent::Enabled => {}
-            ImeEvent::Preedit { text, .. } => self.composing = !text.is_empty(),
+            ImeEvent::Enabled => self.area = None,
+            ImeEvent::Preedit { text, .. } => {
+                let composing = !text.is_empty();
+                if composing && !self.composing {
+                    self.area = None;
+                }
+                self.composing = composing;
+            }
             ImeEvent::Commit(_) | ImeEvent::Disabled => self.composing = false,
         }
     }
@@ -187,7 +250,28 @@ mod tests {
     const NIHAO: &str = "你好";
 
     fn field(wanted: bool, password: bool) -> TextInput {
-        TextInput { wanted, password }
+        TextInput {
+            wanted,
+            password,
+            caret: None,
+        }
+    }
+
+    fn area(x: i32) -> ImeArea {
+        ImeArea {
+            x,
+            y: 700,
+            width: 2,
+            height: 20,
+        }
+    }
+
+    fn caret(caret: ImeArea) -> TextInput {
+        TextInput {
+            wanted: true,
+            password: false,
+            caret: Some(caret),
+        }
     }
 
     fn preedit(text: &str) -> ImeEvent {
@@ -267,10 +351,84 @@ mod tests {
         assert!(!state.step(&field(false, false)).cancel);
     }
 
+    // ---- the caret's area ---------------------------------------------------------------
+
+    #[test]
+    fn the_area_is_in_physical_pixels_at_every_scale() {
+        // A caret 2 x 20 points at (100, 300).
+        let of = |ppp| ImeArea::from_points([100.0, 300.0], [2.0, 20.0], ppp);
+        let at = |x, y, width, height| Some(ImeArea { x, y, width, height });
+        assert_eq!(of(1.0), at(100, 300, 2, 20));
+        assert_eq!(of(1.5), at(150, 450, 3, 30));
+        assert_eq!(of(2.0), at(200, 600, 4, 40));
+        // Rounded, not cut; never empty.
+        assert_eq!(ImeArea::from_points([100.5, 10.0], [0.0, 0.0], 1.5), at(151, 15, 1, 1));
+        // Nothing to say for a number that is no number.
+        assert_eq!(ImeArea::from_points([f32::NAN, 0.0], [1.0, 1.0], 1.0), None);
+        assert_eq!(ImeArea::from_points([0.0, 0.0], [1.0, f32::INFINITY], 1.0), None);
+        assert_eq!(ImeArea::from_points([0.0, 0.0], [1.0, 1.0], 0.0), None);
+    }
+
+    #[test]
+    fn the_area_goes_to_the_window_only_when_it_changed() {
+        let mut state = ImeState::new(true);
+        let steps: Vec<Option<ImeArea>> = [10, 10, 10, 30, 30, 10]
+            .into_iter()
+            .map(|x| state.step(&caret(area(x))).area)
+            .collect();
+        assert_eq!(
+            steps,
+            [Some(area(10)), None, None, Some(area(30)), None, Some(area(10))]
+        );
+        // No caret known: nothing to say.
+        assert_eq!(state.step(&field(true, false)).area, None);
+    }
+
+    #[test]
+    fn the_area_goes_again_when_the_input_method_comes_back_on_and_a_composition_starts() {
+        let mut state = ImeState::new(true);
+        let at = caret(area(10));
+        assert_eq!(state.step(&at).area, Some(area(10)));
+        assert_eq!(state.step(&at).area, None);
+        // Off and on: a context made new knows no area.
+        let off = TextInput { wanted: false, ..at };
+        assert_eq!(state.step(&off).area, None);
+        assert_eq!(state.step(&at).area, Some(area(10)));
+        assert_eq!(state.step(&at).area, None);
+        // A composition starts: sent again once, not for every preedit that follows.
+        state.event(&ImeEvent::Enabled);
+        assert_eq!(state.step(&at).area, Some(area(10)));
+        state.event(&preedit("n"));
+        assert_eq!(state.step(&at).area, Some(area(10)));
+        state.event(&preedit("ni"));
+        state.event(&preedit("nih"));
+        assert_eq!(state.step(&at).area, None);
+        // It ended, and another starts.
+        state.event(&preedit(""));
+        state.event(&preedit("h"));
+        assert_eq!(state.step(&at).area, Some(area(10)));
+    }
+
+    #[test]
+    fn no_area_while_the_input_method_is_off() {
+        let mut state = ImeState::new(true);
+        // A password field's caret is no business of the input method.
+        let password = TextInput {
+            password: true,
+            ..caret(area(10))
+        };
+        assert_eq!(state.step(&password), ImeStep::default());
+        let flying = TextInput {
+            wanted: false,
+            ..caret(area(10))
+        };
+        assert_eq!(state.step(&flying), ImeStep::default());
+    }
+
     #[test]
     fn a_state_that_is_off_asks_for_nothing() {
         let mut state = ImeState::new(false);
-        assert_eq!(state.step(&field(true, false)), ImeStep::default());
+        assert_eq!(state.step(&caret(area(10))), ImeStep::default());
         assert!(!state.swallows_key(&LogicalKey::Named(NamedKey::Process), true, false));
     }
 
