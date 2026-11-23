@@ -279,12 +279,22 @@ pub struct TextInput {
     pub wanted: bool,
     /// The field with the focus is a password field: a desktop's input method stays off for it
     /// (what is typed into a password field is never composed or offered candidates). Phones show
-    /// their keyboard all the same.
+    /// their keyboard all the same. It is what the last UI pass said of the field that was
+    /// focused while the pass drew it, so the input method follows a focus that moves to or from
+    /// a password field one frame later.
     pub password: bool,
     /// Where the text caret of that field is, in physical pixels of the window, for a desktop
     /// input method to open its candidate list next to (`space3d-ui` sets it from egui's
     /// `PlatformOutput::ime`). `None`: no field has the focus, or it is a password field.
     pub caret: Option<crate::ime::ImeArea>,
+    /// The last UI pass asked to interrupt an input method composition that is going on
+    /// (egui's `IMEOutput::should_interrupt_composition`: the player clicked into the field, or
+    /// the game moved the focus with `request_focus`). egui then counts the preedit as plain text
+    /// at once, so the OS composition must end too, or the next preedit would be written beside
+    /// the old one. The runner acts on the rising edge of it while a composition is going on
+    /// (`set_ime_allowed(false)`, then `true`): a game that asks for the focus every frame
+    /// interrupts nothing after the first.
+    pub interrupt: bool,
 }
 
 /// Window/application lifecycle events (`Events<PlatformEvent>`).

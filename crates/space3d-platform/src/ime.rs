@@ -163,8 +163,14 @@ pub(crate) struct ImeStep {
     pub allow: Option<bool>,
     /// `Window::set_ime_cursor_area` here.
     pub area: Option<ImeArea>,
-    /// The input method was turned off while it composed: the app is told with an
-    /// `ImeEvent::Disabled`, or the preedit would stay in the text field as plain text.
+    /// The composition is to end at the OS while the field goes on: `set_ime_allowed(false)`,
+    /// then `set_ime_allowed(true)` (egui interrupted it: see `TextInput::interrupt`).
+    pub restart: bool,
+    /// The input method was turned off, or restarted, while it composed: the app is told with an
+    /// `ImeEvent::Disabled`, so that what the UI's translator remembers of the composition ends
+    /// with it. egui takes the preedit text out of the field for it only while that field still
+    /// has the focus (a `TextEdit` takes no event of an input method otherwise): a field that
+    /// lost the focus keeps what was composed as plain text.
     pub cancel: bool,
 }
 
@@ -179,6 +185,8 @@ pub(crate) struct ImeState {
     composing: bool,
     /// What the window was last told as the caret's area (`None`: nothing since it was turned on).
     area: Option<ImeArea>,
+    /// `TextInput::interrupt` of the last step: only a change from false to true interrupts.
+    interrupted: bool,
 }
 
 impl ImeState {
@@ -189,6 +197,7 @@ impl ImeState {
             on: false,
             composing: false,
             area: None,
+            interrupted: false,
         }
     }
 
@@ -200,6 +209,11 @@ impl ImeState {
         if !self.enabled {
             return step;
         }
+        // egui asks for a composition to be interrupted in the pass where the player clicks into
+        // the field, and in every pass where a game calls `request_focus`: only the first of a
+        // run of them counts, or a game that asks every frame would never let a composition live.
+        let interrupt = text.interrupt && !self.interrupted;
+        self.interrupted = text.interrupt;
         if let Some(on) = ime_switch(text.wanted, text.password, self.on) {
             self.on = on;
             self.area = None;
@@ -208,6 +222,13 @@ impl ImeState {
                 self.composing = false;
                 step.cancel = true;
             }
+        } else if interrupt && self.on && self.composing {
+            // egui already counts the preedit as plain text, so the input method must stop
+            // composing it; a context made new knows no area.
+            self.composing = false;
+            self.area = None;
+            step.restart = true;
+            step.cancel = true;
         }
         if self.on {
             step.area = ime_area_to_send(text.caret, self.area);
@@ -270,7 +291,7 @@ mod tests {
         TextInput {
             wanted,
             password,
-            caret: None,
+            ..TextInput::default()
         }
     }
 
@@ -286,8 +307,8 @@ mod tests {
     fn caret(caret: ImeArea) -> TextInput {
         TextInput {
             wanted: true,
-            password: false,
             caret: Some(caret),
+            ..TextInput::default()
         }
     }
 
@@ -366,6 +387,72 @@ mod tests {
         // Not composing: nothing to cancel.
         state.step(&field(true, false));
         assert!(!state.step(&field(false, false)).cancel);
+    }
+
+    // ---- egui interrupts a composition ----------------------------------------------------
+
+    fn interrupting(text: TextInput) -> TextInput {
+        TextInput {
+            interrupt: true,
+            ..text
+        }
+    }
+
+    #[test]
+    fn an_interrupt_while_composing_restarts_the_input_method_once() {
+        let mut state = ImeState::new(true);
+        let at = caret(area(10));
+        state.step(&at);
+        state.event(&preedit("nihao"));
+        // The player clicked into the field: egui counts the preedit as text from now on.
+        let step = state.step(&interrupting(at));
+        assert_eq!((step.allow, step.restart, step.cancel), (None, true, true));
+        // A context made new knows no area: the caret is told again in the same step.
+        assert_eq!(step.area, Some(area(10)));
+        assert!(!state.composing, "the composition ended at the OS");
+        // The pass after still says so (a `request_focus` every frame): nothing happens twice.
+        state.event(&preedit("ni"));
+        let step = state.step(&interrupting(at));
+        assert_eq!((step.restart, step.cancel), (false, false), "no edge: not again");
+        assert!(state.composing, "a composition that began after it goes on");
+    }
+
+    #[test]
+    fn an_interrupt_with_no_composition_changes_nothing() {
+        let mut state = ImeState::new(true);
+        let at = caret(area(10));
+        state.step(&at);
+        // The first click into a field, a `request_focus`: nothing is being composed.
+        assert_eq!(state.step(&interrupting(at)), ImeStep::default());
+        // It was seen: a composition that starts while the flag stays up is not interrupted.
+        state.event(&preedit("n"));
+        assert!(!state.step(&interrupting(at)).restart);
+        // The edge counts again after the flag went down.
+        state.step(&at);
+        assert!(state.step(&interrupting(at)).restart);
+    }
+
+    #[test]
+    fn an_interrupt_with_the_input_method_off_or_going_off_is_no_restart() {
+        // Off (a password field, no field): there is no context to restart.
+        let mut state = ImeState::new(true);
+        let password = TextInput {
+            interrupt: true,
+            ..field(true, true)
+        };
+        assert_eq!(state.step(&password), ImeStep::default());
+        // Going off in the same step: that is the cancel, once.
+        let mut state = ImeState::new(true);
+        state.step(&field(true, false));
+        state.event(&preedit("ni"));
+        let step = state.step(&TextInput {
+            interrupt: true,
+            ..field(false, false)
+        });
+        assert_eq!((step.allow, step.restart, step.cancel), (Some(false), false, true));
+        // Support off (the kill switch): nothing, whatever egui says.
+        let mut state = ImeState::new(false);
+        assert_eq!(state.step(&interrupting(caret(area(10)))), ImeStep::default());
     }
 
     // ---- the caret's area ---------------------------------------------------------------

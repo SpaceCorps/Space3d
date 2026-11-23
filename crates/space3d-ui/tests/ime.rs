@@ -4,8 +4,9 @@
 //! The window itself (winit's `set_ime_allowed`, the OS's candidate list) cannot be driven
 //! without a real input method: see "Input methods (IME)" in docs/platforms.md for the manual test.
 
+use space3d_core::glam::UVec2;
 use space3d_core::prelude::*;
-use space3d_platform::{ImeEvent, Input, KeyCode, TextInput};
+use space3d_platform::{ImeEvent, Input, KeyCode, MouseButton, TextInput, WindowState};
 use space3d_ui::*;
 
 /// A one-line field bound to the `String` resource, focused on the first pass (a password field
@@ -236,4 +237,135 @@ fn typed_text_and_keys_are_what_they_were() {
     app.step_ticks(1);
     assert_eq!(text(&app), "hi");
     assert!(app.resources.expect::<Input>().ime_events().is_empty());
+}
+
+// ---- a click into the field while it composes ---------------------------------------------
+
+/// The field of `field_app`, in a window the pointer can be in (a 1280x720 one at 1 px per point).
+fn window_app() -> App {
+    let mut app = App::new();
+    app.add_plugin(UiPlugin::deterministic());
+    app.insert_resource(WindowState {
+        physical_size: UVec2::new(1280, 720),
+        scale_factor: 1.0,
+        focused: true,
+        suspended: false,
+        title: String::new(),
+        cursor_visible: true,
+        cursor_grab: false,
+    });
+    app.insert_resource(String::new());
+    app.add_ui_system(|ctx, sys| {
+        egui::Window::new("Text").fixed_pos([10.0, 10.0]).show(ctx, |ui| {
+            let text = sys.resources.expect_mut::<String>();
+            let r = ui.add(egui::TextEdit::singleline(text));
+            if ctx.cumulative_pass_nr() == 1 {
+                r.request_focus();
+            }
+        });
+    });
+    app.step_ticks(3);
+    app
+}
+
+fn interrupt(app: &App) -> bool {
+    app.resources.expect::<TextInput>().interrupt
+}
+
+/// The pointer to a point inside the field, to the right of its text.
+fn pointer_into_the_field(app: &mut App) {
+    let caret = app_caret(app).expect("caret");
+    let at = Vec2::new(caret.x as f32 + 60.0, caret.y as f32 + caret.height as f32 / 2.0);
+    app.resources.expect_mut::<Input>().inject_mouse_move(at);
+    app.step_ticks(1);
+}
+
+fn press_and_release(app: &mut App) {
+    app.resources
+        .expect_mut::<Input>()
+        .inject_mouse_button_down(MouseButton::Left);
+    app.step_ticks(1);
+    app.resources
+        .expect_mut::<Input>()
+        .inject_mouse_button_up(MouseButton::Left);
+    app.step_ticks(1);
+}
+
+#[test]
+fn a_click_into_the_field_asks_the_platform_to_end_the_composition() {
+    let mut app = window_app();
+    frame(&mut app, [preedit("nihao")]);
+    assert_eq!(text(&app), "nihao");
+    assert!(!interrupt(&app), "nobody asked for the focus in this pass");
+    pointer_into_the_field(&mut app);
+    assert!(!interrupt(&app), "a pointer that only moves interrupts nothing");
+    // The press: egui takes the click for a move of the caret and counts the preedit as text.
+    app.resources
+        .expect_mut::<Input>()
+        .inject_mouse_button_down(MouseButton::Left);
+    app.step_ticks(1);
+    assert!(interrupt(&app), "the pass asks for the composition to be interrupted");
+    assert_eq!(text(&app), "nihao", "the letters are text in the field now");
+    // ... and it is a pass, not a state.
+    app.resources
+        .expect_mut::<Input>()
+        .inject_mouse_button_up(MouseButton::Left);
+    app.step_ticks(2);
+    assert!(!interrupt(&app));
+}
+
+/// What the runner does for that (`ImeState::step`: the input method off and on, and a
+/// `Disabled` for the UI): the old composition is gone, the new one is written after the text.
+#[test]
+fn after_the_restart_the_next_composition_does_not_meet_the_old_one() {
+    let mut app = window_app();
+    frame(&mut app, [preedit("nihao")]);
+    pointer_into_the_field(&mut app);
+    press_and_release(&mut app);
+    assert_eq!(text(&app), "nihao");
+    // The runner's restart: the window ends the composition, the UI is told once.
+    frame(&mut app, [ImeEvent::Disabled]);
+    assert_eq!(
+        text(&app),
+        "nihao",
+        "the letters the player clicked away from stay as text"
+    );
+    frame(&mut app, [preedit("ni")]);
+    frame(&mut app, [preedit("nihao")]);
+    assert_eq!(text(&app), "nihaonihao");
+    frame(&mut app, [preedit(""), ImeEvent::Commit("你好".into())]);
+    assert_eq!(text(&app), "nihao你好", "one composition replaced, not two");
+}
+
+/// Without the restart (the platform not acting on the flag) the old preedit would stay beside
+/// the new one: what the flag is for.
+#[test]
+fn without_the_restart_the_old_preedit_stays_beside_the_new_one() {
+    let mut app = window_app();
+    frame(&mut app, [preedit("nihao")]);
+    pointer_into_the_field(&mut app);
+    press_and_release(&mut app);
+    // The OS still composes: its next preedit is written after the letters egui no longer owns,
+    // and the commit replaces only that one.
+    frame(&mut app, [preedit("nihao你")]);
+    frame(&mut app, [preedit(""), ImeEvent::Commit("你好".into())]);
+    assert_eq!(text(&app), "nihao你好", "the old pinyin is left in the field");
+}
+
+#[test]
+fn a_game_that_asks_for_the_focus_every_pass_raises_the_flag_every_pass() {
+    // (the platform acts on the first pass of such a run only: `ImeState::step`)
+    let mut app = App::new();
+    app.add_plugin(UiPlugin::deterministic());
+    app.insert_resource(String::new());
+    app.add_ui_system(|ctx, sys| {
+        egui::Window::new("Text").fixed_pos([10.0, 10.0]).show(ctx, |ui| {
+            let text = sys.resources.expect_mut::<String>();
+            ui.add(egui::TextEdit::singleline(text)).request_focus();
+        });
+    });
+    app.step_ticks(3);
+    assert!(interrupt(&app));
+    app.step_ticks(1);
+    assert!(interrupt(&app));
 }

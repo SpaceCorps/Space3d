@@ -460,6 +460,18 @@ Linux has no CJK font bundled either: the game ships one or loads the system's
    held), so Esc does not close a chat and Backspace does not delete the text before the
    composition. They occur only while the IME is on.
 
+5. **A click into the field ends a composition at the OS.** egui counts the preedit as plain text
+   from the moment the player clicks into the field (its caret moves, `Memory::request_focus`
+   interrupts the composition): the letters stay in the field, as they do anywhere. The OS
+   composition would go on, and its next preedit would be written beside the old one. So
+   `space3d-ui` passes egui's `IMEOutput::should_interrupt_composition` on (`TextInput::interrupt`)
+   and the runner, **while a composition is going on**, turns the IME off and on again
+   (`set_ime_allowed(false)`, `true`) and tells the UI with a `Disabled`. Only the first pass of a
+   run of them counts (a game that calls `request_focus` every frame would otherwise never let a
+   composition live), and a request with no composition going on does nothing. What the IME does
+   with the letters it was composing when its context goes away (drops them, or commits them) is
+   its own: see "Not done".
+
 The order of events differs by platform. Windows: `Enabled`, `Preedit("n")`, `Preedit("ni")`...,
 then `Preedit("")`, `Commit("你好")`, `Disabled`. macOS: an empty `Preedit` before each `Commit`.
 Wayland: empty `Preedit`s with no composition. Rely only on this: a `Preedit` with text starts or
@@ -480,8 +492,9 @@ with text, the page's hidden input) is the code it was.
 * The desktop web with a mouse has no IME path. A game's hidden `<input>` is shown after a touch
   only.
 * Linux has no bundled CJK font; the game loads one.
-* `IMEOutput::should_interrupt_composition` (an app that changes the text under a composition
-  asks the IME to drop it) is not passed on: `Memory::interrupt_ime` ends nothing at the OS.
+* What an input method does with the letters it was composing when the engine ends the
+  composition (a click into the field) has not been seen on a real one: they may be dropped, or
+  committed once more, which would put them in the field a second time.
 * egui's `ImeEvent::DeleteSurrounding` (Wayland's surrounding-text deletion) is not produced:
   winit 0.30 has no such event.
 * A `space3d-ui` that is disabled (`EguiContext::set_enabled(false)`) reads no `Input`, and
@@ -504,6 +517,9 @@ and keyboard Chinese (Simplified) with Microsoft Pinyin:
 6. Repeat 3 in windowed mode and in borderless fullscreen (the candidate window must be
    visible), and on a display scaled to 150 %.
 7. With `SPACE3D_NO_IME=1` the chat takes no Chinese, as before.
+8. Type `nihao` and click into the chat line (not on the end of the text): the letters stay as
+   text, the candidate list is gone, and the next `nihao` starts a new composition at the click
+   (no second run of pinyin beside the first, and nothing committed twice).
 
 On a Mac (Pinyin, Kotoeri) and on Linux (ibus or fcitx5, X11 and Wayland) do step 3; on X11 dead
 keys do not work while a field has the focus. None of this has been seen with a real IME yet.

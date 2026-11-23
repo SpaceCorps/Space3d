@@ -525,6 +525,10 @@ pub(crate) fn end_frame(sys: &mut SystemCtx, overlay: &Arc<Mutex<EguiOverlay>>) 
     let cursor_changed = new_cursor != e.cursor_icon || !e.cursor_sent;
     e.cursor_icon = new_cursor;
     let ppp = output.pixels_per_point;
+    let interrupt = output
+        .platform_output
+        .ime
+        .is_some_and(|ime| ime.should_interrupt_composition);
     let (password, caret) = ime_text_input(output.platform_output.ime, ppp);
     let span = part("ui::end_frame.tessellate");
     let primitives = e.ctx.tessellate(output.shapes, ppp);
@@ -559,6 +563,11 @@ pub(crate) fn end_frame(sys: &mut SystemCtx, overlay: &Arc<Mutex<EguiOverlay>>) 
     }
     if text_input.caret != caret {
         text_input.caret = caret;
+    }
+    // (egui sets it in every pass where the focus is requested, a click into a field included:
+    // the platform acts on the first pass of a run of them, and only while a composition is going on)
+    if text_input.interrupt != interrupt {
+        text_input.interrupt = interrupt;
     }
 }
 

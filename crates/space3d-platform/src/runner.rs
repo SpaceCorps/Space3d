@@ -602,8 +602,15 @@ impl WinitRunner {
                 tracing::debug!(target: "ime", on, "set_ime_allowed");
                 window.set_ime_allowed(on);
             }
+            if step.restart {
+                // egui interrupted the composition (a click into the field): ending it at the OS
+                // is turning the input method off and on again.
+                tracing::debug!(target: "ime", "set_ime_allowed off and on: the composition was interrupted");
+                window.set_ime_allowed(false);
+                window.set_ime_allowed(true);
+            }
             if step.cancel {
-                // Turned off in the middle of a composition: the preedit is no more.
+                // Turned off, or restarted, in the middle of a composition: it is no more.
                 self.app
                     .resources
                     .init::<Input>()
