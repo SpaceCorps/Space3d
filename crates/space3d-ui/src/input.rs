@@ -559,7 +559,11 @@ impl InputTranslator {
     /// `Disabled` end a composition. egui 0.36 ignores its deprecated `Enabled`/`Disabled` and
     /// ignores an empty preedit when no composition is going on, so what is sent is only what
     /// it follows: a `Disabled` that finds a composition becomes an empty preedit (the text the
-    /// IME was composing is taken out of the field), one that does not is nothing.
+    /// IME was composing is taken out of the field), one that does not is nothing. That holds
+    /// while the field that composed still has the focus: a `TextEdit` takes no event of an input
+    /// method without it, so a field that lost the focus in the middle of a composition keeps the
+    /// letters as plain text (a game that wants them gone drops them when its field loses the
+    /// focus: egui's `Event::Ime` tells it a composition was going on).
     fn ime(&mut self, events: &[ImeEvent], out: &mut Vec<egui::Event>) {
         for event in events {
             match event {

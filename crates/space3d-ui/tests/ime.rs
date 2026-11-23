@@ -272,12 +272,20 @@ fn interrupt(app: &App) -> bool {
     app.resources.expect::<TextInput>().interrupt
 }
 
-/// The pointer to a point inside the field, to the right of its text.
-fn pointer_into_the_field(app: &mut App) {
+/// A point inside the focused field, to the right of its text.
+fn field_point(app: &App) -> Vec2 {
     let caret = app_caret(app).expect("caret");
-    let at = Vec2::new(caret.x as f32 + 60.0, caret.y as f32 + caret.height as f32 / 2.0);
+    Vec2::new(caret.x as f32 + 60.0, caret.y as f32 + caret.height as f32 / 2.0)
+}
+
+fn pointer_to(app: &mut App, at: Vec2) {
     app.resources.expect_mut::<Input>().inject_mouse_move(at);
     app.step_ticks(1);
+}
+
+fn pointer_into_the_field(app: &mut App) {
+    let at = field_point(app);
+    pointer_to(app, at);
 }
 
 fn press_and_release(app: &mut App) {
@@ -368,4 +376,41 @@ fn a_game_that_asks_for_the_focus_every_pass_raises_the_flag_every_pass() {
     assert!(interrupt(&app));
     app.step_ticks(1);
     assert!(interrupt(&app));
+}
+
+/// The field loses the focus (a click on the flight view, the chat closing) in the middle of a
+/// composition: the IME goes off, the UI is told with a `Disabled`, and no `TextEdit` takes it.
+/// What egui wrote into the string stays: the letters are text, and the player is not left with
+/// a composition that does not exist. (`docs/platforms.md`: a game that wants them gone drops
+/// them itself when its field loses the focus.)
+#[test]
+fn a_field_that_lost_the_focus_in_a_composition_keeps_the_letters_as_text() {
+    let mut app = window_app();
+    frame(&mut app, [preedit("nihao")]);
+    let field = field_point(&app);
+    app.resources.expect_mut::<Input>().inject_key_tap(KeyCode::Escape);
+    app.step_ticks(2);
+    assert!(!app.resources.expect::<TextInput>().wanted, "the focus left the field");
+    // What the runner does for it: the IME goes off while it composed.
+    frame(&mut app, [ImeEvent::Disabled]);
+    assert_eq!(
+        text(&app),
+        "nihao",
+        "no field has the focus: nothing takes the empty preedit the UI sends"
+    );
+    // The player comes back into the field: a new composition starts after the letters and the
+    // old one does not come back.
+    pointer_to(&mut app, field);
+    press_and_release(&mut app);
+    assert!(app.resources.expect::<TextInput>().wanted, "the click took the focus");
+    frame(&mut app, [preedit("ni")]);
+    assert_eq!(text(&app), "nihaoni");
+    frame(&mut app, [preedit(""), ImeEvent::Commit("你".into())]);
+    assert_eq!(text(&app), "nihao你", "one composition, committed once");
+    frame(&mut app, [ImeEvent::Disabled]);
+    assert_eq!(
+        text(&app),
+        "nihao你",
+        "a Disabled after the commit has nothing to take out"
+    );
 }

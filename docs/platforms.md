@@ -414,8 +414,8 @@ ask on phones only, so a game with a text field could not be typed Chinese into 
 | | input method | how |
 |---|---|---|
 | Windows | yes | `ImmAssociateContextEx` (winit); `Enabled`, `Preedit`, `Commit`, `Disabled` from `WM_IME_*`; the IME's keys still arrive, with the logical key `Process` |
-| macOS | yes | `interpretKeyEvents` while allowed: **every** character typed into a focused text field then arrives as a commit (winit sends no key event for it), so `Input::text()` stays empty there and `ime_events()` has the text |
-| Linux (X11) | yes | XIM/ibus (winit); an allowed input context loses dead keys during a composition; the candidate list gets the caret's position only (X11 has no area) |
+| macOS | yes | `interpretKeyEvents` while allowed. winit sends a commit only for text that was **composed** (pinyin, kana, dead keys: there is marked text); a key with no composition (plain Latin letters) still arrives as a key event with its text, so `Input::text()` has those and `ime_events()` the composed ones. Switching the input source (the layout) while the IME is on sends a `Disabled` |
+| Linux (X11) | yes | XIM/ibus (winit); an allowed input context loses dead keys during a composition; the candidate list gets the caret's position only (winit ignores the size on X11: the XIM spot is the caret's top-left, where the list opens is not verified) |
 | Linux (Wayland) | yes | text-input-v3 (winit); an empty `Preedit` may come with no composition: it is ignored |
 | Web | **no** | winit's web backend has no IME and sends no `Ime` event. A game with a touch keyboard (a hidden `<input>`) makes egui's IME events itself; the engine adds none, so the page's text is entered once. A desktop browser with a mouse has no IME path at all |
 | Android | **no** | a NativeActivity has no `InputConnection`: the on-screen keyboard's text arrives as key events (ASCII). See [Android](#android) |
@@ -433,7 +433,10 @@ Linux has no CJK font bundled either: the game ships one or loads the system's
    player's IME is in Chinese mode. A **password field never gets one** (`TextInput::password`,
    from egui's `IMEOutput::purpose`): the IME goes off when it takes the focus. (winit's
    `set_ime_purpose` does nothing on Windows and X11, so "off" is the only way to keep a
-   password out of an IME.)
+   password out of an IME.) The IME follows the focus **one frame later**: what `TextInput`
+   says is what the pass drew, and a pass in which the focus moves (`request_focus` after both
+   fields were drawn, the sign-in form's Enter) still reports the field the focus left; a
+   composition cannot start in 16 ms.
 2. **The composition is forwarded.** The runner puts winit's `Ime` events in
    `Input::ime_events()` (`ImeEvent::{Enabled, Preedit { text, cursor }, Commit, Disabled}`; a
    frame's worth, in order, cleared in `end_frame`). The preedit's cursor is in **characters**:
@@ -443,7 +446,12 @@ Linux has no CJK font bundled either: the game ships one or loads the system's
    `String`, underlined, until it ends); an empty preedit, a commit or a `Disabled` ends it. egui
    0.36 ignores its (deprecated) `Enabled` and `Disabled`, so the translator sends an empty
    preedit for a `Disabled` that finds a composition, which takes the preedit text out of the
-   field. A commit is **not also `Input::text()`**: egui would enter it twice.
+   field **while that field still has the focus**: a `TextEdit` takes no event of an input method
+   without it. A field that loses the focus in the middle of a composition (a click on the flight
+   view, the chat closing) keeps the letters as plain text, and the IME is off after it; a game
+   that wants them gone drops them itself when its field loses the focus (egui's `Event::Ime`
+   tells it a composition was going on). A commit is **not also `Input::text()`**: egui would
+   enter it twice.
 3. **The candidate list opens at the caret.** `space3d-ui` reads the focused field's
    `PlatformOutput::ime` at the end of the pass (the caret's rectangle, `IMEOutput::cursor_rect`,
    in points) and sets `TextInput::caret` in physical pixels (points times the pass's pixels
@@ -462,7 +470,9 @@ Linux has no CJK font bundled either: the game ships one or loads the system's
    arrows and Space that pick a candidate. The runner drops those presses (and the release of a
    key it never saw go down; the release of a held key goes through, or the key would stay
    held), so Esc does not close a chat and Backspace does not delete the text before the
-   composition. They occur only while the IME is on.
+   composition. These keys come from the OS's input method; the runner drops them whenever the
+   support is enabled (not only while the IME is on), so a key the IME processed just as it
+   went off is no ghost key press either.
 
 5. **A click into the field ends a composition at the OS.** egui counts the preedit as plain text
    from the moment the player clicks into the field (its caret moves, `Memory::request_focus`
@@ -484,8 +494,9 @@ updates a composition; an empty one, a `Commit` or a `Disabled` ends it; a `Comm
 
 **The kill switch.** `SPACE3D_NO_IME=1` (also `true`, `yes`, `on`) in the environment, or
 `WindowPlugin { ime: false, .. }`, leaves the window as it was before: no IME on a desktop, no
-`ImeEvent`, and a commit (there is none then) would be typed text. There is no setting for a
-player: set the variable for the process (a launcher, a shortcut). Phones and the web never
+`ImeEvent`, and a commit (there is none then) would be typed text. The engine has no setting
+for a player: set the variable for the process (a launcher, a shortcut), or have the game read
+a setting or a command-line flag into `WindowPlugin::ime` where it builds the plugin. Phones and the web never
 change: the on-screen keyboard path (`TextInput::wanted` -> `set_ime_allowed`, the key events
 with text, the page's hidden input) is the code it was.
 
@@ -526,7 +537,10 @@ and keyboard Chinese (Simplified) with Microsoft Pinyin:
    (no second run of pinyin beside the first, and nothing committed twice).
 
 On a Mac (Pinyin, Kotoeri) and on Linux (ibus or fcitx5, X11 and Wayland) do step 3; on X11 dead
-keys do not work while a field has the focus. None of this has been seen with a real IME yet.
+keys do not work while a field has the focus, and note where the candidate list opens: winit
+passes X11 the caret's top-left only (the XIM spot, conventionally the baseline), so a list that
+covers the chat line wants the caret's height added to `y` on X11 (one line in
+`apply_window_state`, `set_ime_cursor_area`). None of this has been seen with a real IME yet.
 
 The same test without a game: `cargo run -p space3d-ui --example ime_field` opens a window with a
 chat line, a password line, a "W held" line and the list of what the input method sent. With

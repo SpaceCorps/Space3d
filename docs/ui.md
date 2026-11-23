@@ -344,8 +344,10 @@ and tells where the caret is, so the candidate list opens at the field: see
 (`SPACE3D_NO_IME=1`) and the manual test. A game that mirrors the text it takes into another
 rule (an alphabet filter that rewrites the bound `String`) must leave it alone while a
 composition is going on (egui writes the preedit into the `String`: a rule that cuts it ends
-the composition), and filter the text once the commit has come. Linux has no bundled CJK font:
-ship one or load the system's.
+the composition), and filter the text once the commit has come. A field that loses the focus in
+the middle of a composition keeps the letters as plain text (egui takes no input method event
+without the focus): a game that wants them gone drops them itself. Linux has no bundled CJK
+font: ship one or load the system's.
 
 ## Chinese and Japanese line breaking (kinsoku)
 
