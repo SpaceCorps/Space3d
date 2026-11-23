@@ -230,7 +230,7 @@ pub(crate) fn run(app: App, settings: WindowPlugin) {
         surface_retry: SurfaceRetry::default(),
         layout_watch: LayoutWatch::default(),
         buttons: ButtonReconciler::default(),
-        ime: ImeState::default(),
+        ime: ImeState::new(DESKTOP),
         #[cfg(any(
             target_os = "windows",
             target_os = "macos",
@@ -592,9 +592,17 @@ impl WinitRunner {
                 .get::<crate::window::TextInput>()
                 .copied()
                 .unwrap_or_default();
-            if let Some(on) = self.ime.step(&text).allow {
+            let step = self.ime.step(&text);
+            if let Some(on) = step.allow {
                 tracing::debug!(target: "ime", on, "set_ime_allowed");
                 window.set_ime_allowed(on);
+            }
+            if step.cancel {
+                // Turned off in the middle of a composition: the preedit is no more.
+                self.app
+                    .resources
+                    .init::<Input>()
+                    .inject_ime(crate::ime::ImeEvent::Disabled);
             }
         }
         // Android: how much of the window the keyboard covers, asked every few frames while a
@@ -847,6 +855,12 @@ impl ApplicationHandler for WinitRunner {
                             let input = self.input();
                             crate::layout::macos_released_key(code, |k| input.pressed(k))
                         };
+                        // An input method processed the key (Windows: the logical key `Process`):
+                        // it is the IME's, not the game's (`crate::ime`).
+                        let held = self.input().pressed(code);
+                        if self.ime.swallows_key(&event.logical_key, pressed, held) {
+                            return;
+                        }
                         let key_event = KeyEvent {
                             physical: code,
                             key_without_modifiers: key_without_modifiers(&event),
@@ -940,10 +954,15 @@ impl ApplicationHandler for WinitRunner {
                     _ => {}
                 }
             }
-            // Text an input method commits. winit 0.30 sends it on desktop only (when the game
-            // allows IME): iOS's on-screen keyboard arrives as key events with text, and
-            // Android's only as far as the keyboard sends key events (ASCII; docs/platforms.md).
-            WindowEvent::Ime(winit::event::Ime::Commit(text)) => self.input().inject_text(&text),
+            // What an input method does. winit 0.30 sends it on a desktop only, when the game
+            // allows IME (`apply_window_state`): iOS's on-screen keyboard arrives as key events
+            // with text, and Android's only as far as the keyboard sends key events (ASCII;
+            // docs/platforms.md). A desktop's goes to `Input::ime_events` (and a commit is not
+            // also typed text: egui would enter it twice); anywhere else a commit is typed text.
+            WindowEvent::Ime(ime) => {
+                let input = self.app.resources.init::<Input>();
+                self.ime.deliver(ime, input);
+            }
             WindowEvent::RedrawRequested => self.frame(event_loop),
             _ => {}
         }

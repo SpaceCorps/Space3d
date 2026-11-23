@@ -42,6 +42,7 @@
 //! assert_eq!(input.text(), "q");
 //! ```
 
+use crate::ime::ImeEvent;
 use crate::layout::{KeyLabel, KeyLabelSource, KeyLocation, KeyboardLayout, LogicalKey, english_key_name};
 use glam::Vec2;
 use space3d_core::{App, Plugin, Stage};
@@ -493,6 +494,8 @@ pub struct Input {
     /// The gesture's fingers lifted: it is this frame's last.
     gesture_over: bool,
     text: String,
+    /// The OS input method's events of the frame, in order (`Input::ime_events`).
+    ime_events: Vec<ImeEvent>,
     gamepads: HashMap<u32, Gamepad>,
     gamepad_changes: Vec<GamepadChange>,
     window_size: Vec2,
@@ -599,9 +602,18 @@ impl Input {
     pub fn gesture(&self) -> Option<&TouchGesture> {
         self.gesture.as_ref()
     }
-    /// Text typed this frame.
+    /// Text typed this frame: the text of key events, and what a phone's or the web's keyboard
+    /// sends. On a desktop an input method's commit is not in it but in [`Self::ime_events`]
+    /// (`space3d-ui` enters it into the text field once).
     pub fn text(&self) -> &str {
         &self.text
+    }
+    /// What the OS input method (IME: Chinese, Japanese, Korean typing) did this frame, in order:
+    /// the composition as it grows and the committed text (see [`ImeEvent`]). Only on a desktop
+    /// whose window runner asked for the input method (`WindowPlugin::ime`; while a text field
+    /// has the focus); cleared in `end_frame`. `space3d-ui` makes egui's IME events of it.
+    pub fn ime_events(&self) -> &[ImeEvent] {
+        &self.ime_events
     }
     /// Gamepad by id.
     pub fn gamepad(&self, id: u32) -> Option<&Gamepad> {
@@ -928,6 +940,11 @@ impl Input {
     pub fn inject_text(&mut self, text: &str) {
         self.text.push_str(text);
     }
+    /// An event of the OS input method (the window runner feeds it; a test or a replay may
+    /// too): see [`Self::ime_events`].
+    pub fn inject_ime(&mut self, event: ImeEvent) {
+        self.ime_events.push(event);
+    }
     /// Connect a gamepad (no name).
     pub fn inject_gamepad_connected(&mut self, id: u32) {
         self.gamepad_entry(id);
@@ -1008,6 +1025,7 @@ impl Input {
             g.just_started = false;
         }
         self.text.clear();
+        self.ime_events.clear();
         self.key_events.clear();
         self.mouse_button_events.clear();
         for t in &mut self.touches {

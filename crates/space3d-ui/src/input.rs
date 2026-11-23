@@ -60,7 +60,8 @@
 
 use space3d_core::glam::Vec2;
 use space3d_platform::{
-    Input, KeyCode, LogicalKey, MouseButton, MouseButtonCause, MouseButtonEvent, NamedKey, is_writing_system_key,
+    ImeEvent, Input, KeyCode, LogicalKey, MouseButton, MouseButtonCause, MouseButtonEvent, NamedKey,
+    is_writing_system_key,
 };
 
 /// Map a logical (layout) key to an egui key — the mapping egui-winit uses: characters by
@@ -538,6 +539,9 @@ pub(crate) struct InputTranslator {
     repeats: Vec<(KeyCode, f64)>,
     /// Held keys and the egui key their press was sent as (the release and repeats reuse it).
     held: Vec<(KeyCode, egui::Key)>,
+    /// An input method's composition is going on as far as egui was told: a preedit with text
+    /// was sent and no commit, empty preedit or `Disabled` since.
+    ime_composing: bool,
 }
 
 impl InputTranslator {
@@ -546,6 +550,53 @@ impl InputTranslator {
         if focused == self.unfocused {
             self.unfocused = !focused;
             out.push(egui::Event::WindowFocused(focused));
+        }
+    }
+
+    /// An input method's events as egui's `Event::Ime`, which a focused `TextEdit` takes: a
+    /// preedit with text shows it (underlined, in the bound string) and replaces the one before;
+    /// a commit replaces the preedit with the finished text. An empty preedit, a commit and a
+    /// `Disabled` end a composition. egui 0.36 ignores its deprecated `Enabled`/`Disabled` and
+    /// ignores an empty preedit when no composition is going on, so what is sent is only what
+    /// it follows: a `Disabled` that finds a composition becomes an empty preedit (the text the
+    /// IME was composing is taken out of the field), one that does not is nothing.
+    fn ime(&mut self, events: &[ImeEvent], out: &mut Vec<egui::Event>) {
+        for event in events {
+            match event {
+                ImeEvent::Enabled => {}
+                ImeEvent::Preedit { text, cursor } if !text.is_empty() => {
+                    // (the cursor is in characters, within the text: a script's event may not be)
+                    let chars = text.chars().count();
+                    let active = cursor.as_ref().map(|c| c.start.min(chars)..c.end.min(chars));
+                    self.ime_composing = true;
+                    out.push(egui::Event::Ime(egui::ImeEvent::Preedit {
+                        text: text.clone(),
+                        active_range_chars: active.map(|r| r.start.min(r.end)..r.end),
+                    }));
+                }
+                ImeEvent::Commit(text) => {
+                    // (a line break is the Enter key's, not text an input method commits)
+                    let text: String = text.chars().filter(|c| !c.is_control()).collect();
+                    if text.is_empty() {
+                        self.end_ime_composition(out);
+                    } else {
+                        // egui takes the preedit out itself, then enters the text
+                        self.ime_composing = false;
+                        out.push(egui::Event::Ime(egui::ImeEvent::Commit(text)));
+                    }
+                }
+                ImeEvent::Preedit { .. } | ImeEvent::Disabled => self.end_ime_composition(out),
+            }
+        }
+    }
+
+    /// An empty preedit if a composition is going on (egui takes its text out), else nothing.
+    fn end_ime_composition(&mut self, out: &mut Vec<egui::Event>) {
+        if std::mem::take(&mut self.ime_composing) {
+            out.push(egui::Event::Ime(egui::ImeEvent::Preedit {
+                text: String::new(),
+                active_range_chars: None,
+            }));
         }
     }
 
@@ -626,6 +677,10 @@ impl InputTranslator {
                 modifiers: mods,
             });
         }
+
+        // The input method (desktops: `Input::ime_events`), before the keys: a commit and the
+        // Enter that follows it in one frame must enter the text first.
+        self.ime(input.ime_events(), out);
 
         // Keys (+ clipboard shortcuts): the physical keys egui knows, then any other key that
         // produced an event this frame (its logical key may still be one egui knows).
@@ -1724,5 +1779,181 @@ mod tests {
                 .any(|e| matches!(e, egui::Event::PointerButton { pressed: false, .. }))
         );
         assert_eq!(ev.last(), Some(&egui::Event::PointerGone));
+    }
+
+    // ---- the input method ----------------------------------------------------------------
+
+    fn preedit(text: &str) -> ImeEvent {
+        ImeEvent::Preedit {
+            text: text.into(),
+            cursor: None,
+        }
+    }
+
+    /// egui's IME events of one frame's `Input::ime_events` (a translator that keeps what it knows
+    /// between frames: pass it in).
+    fn ime_frame(t: &mut InputTranslator, events: &[ImeEvent]) -> Vec<egui::Event> {
+        let mut input = Input::default();
+        for e in events {
+            input.inject_ime(e.clone());
+        }
+        let mut ev = Vec::new();
+        t.translate(&input, 1.0, 0.0, "", &mut ev);
+        ev
+    }
+
+    fn egui_preedit(text: &str, active: Option<std::ops::Range<usize>>) -> egui::Event {
+        egui::Event::Ime(egui::ImeEvent::Preedit {
+            text: text.into(),
+            active_range_chars: active,
+        })
+    }
+
+    fn egui_commit(text: &str) -> egui::Event {
+        egui::Event::Ime(egui::ImeEvent::Commit(text.into()))
+    }
+
+    #[test]
+    fn a_preedit_cursor_in_bytes_reaches_egui_in_characters() {
+        let mut t = InputTranslator::default();
+        // winit: 你好 is 6 bytes; the IME converts the second character (bytes 3..6).
+        let winit = space3d_platform::winit::event::Ime::Preedit("你好".into(), Some((3, 6)));
+        let ev = ime_frame(&mut t, &[ImeEvent::from_winit(winit)]);
+        assert_eq!(ev, vec![egui_preedit("你好", Some(1..2))], "characters, not bytes");
+    }
+
+    #[test]
+    fn a_preedit_cursor_outside_the_text_is_cut_to_it() {
+        let mut t = InputTranslator::default();
+        let ev = ime_frame(
+            &mut t,
+            &[ImeEvent::Preedit {
+                text: "ni".into(),
+                cursor: Some(5..9),
+            }],
+        );
+        assert_eq!(ev, vec![egui_preedit("ni", Some(2..2))]);
+    }
+
+    #[test]
+    fn a_commit_is_one_ime_event_and_no_text() {
+        let mut t = InputTranslator::default();
+        let ev = ime_frame(
+            &mut t,
+            &[preedit("nihao"), preedit(""), ImeEvent::Commit("你好".into())],
+        );
+        assert_eq!(
+            ev,
+            vec![egui_preedit("nihao", None), egui_preedit("", None), egui_commit("你好")]
+        );
+        assert!(
+            !ev.iter().any(|e| matches!(e, egui::Event::Text(_))),
+            "egui would enter it twice"
+        );
+    }
+
+    #[test]
+    fn a_commit_without_a_preedit_works() {
+        let mut t = InputTranslator::default();
+        assert_eq!(
+            ime_frame(&mut t, &[ImeEvent::Commit("你好".into())]),
+            vec![egui_commit("你好")]
+        );
+        // (control characters are no text; a commit of nothing else is nothing)
+        assert_eq!(ime_frame(&mut t, &[ImeEvent::Commit("\n".into())]), vec![]);
+        assert_eq!(
+            ime_frame(&mut t, &[ImeEvent::Commit("好\r".into())]),
+            vec![egui_commit("好")]
+        );
+    }
+
+    #[test]
+    fn an_empty_preedit_ends_the_composition_once() {
+        let mut t = InputTranslator::default();
+        assert_eq!(ime_frame(&mut t, &[preedit("ni")]), vec![egui_preedit("ni", None)]);
+        assert_eq!(ime_frame(&mut t, &[preedit("")]), vec![egui_preedit("", None)], "ended");
+        // Wayland sends them with no composition (and Windows twice around a commit).
+        assert_eq!(ime_frame(&mut t, &[preedit(""), preedit("")]), vec![]);
+        // The composition's end is remembered across frames.
+        assert_eq!(ime_frame(&mut t, &[preedit("a")]), vec![egui_preedit("a", None)]);
+        assert_eq!(
+            ime_frame(&mut t, &[ImeEvent::Commit("啊".into()), preedit("")]),
+            vec![egui_commit("啊")],
+            "a commit ended it: the empty preedit after it is nothing"
+        );
+    }
+
+    #[test]
+    fn disabled_clears_a_live_composition_and_otherwise_does_nothing() {
+        let mut t = InputTranslator::default();
+        assert_eq!(ime_frame(&mut t, &[ImeEvent::Disabled]), vec![]);
+        assert_eq!(ime_frame(&mut t, &[preedit("ni")]), vec![egui_preedit("ni", None)]);
+        assert_eq!(
+            ime_frame(&mut t, &[ImeEvent::Disabled]),
+            vec![egui_preedit("", None)],
+            "the preedit text goes out of the field"
+        );
+        assert_eq!(ime_frame(&mut t, &[ImeEvent::Disabled, ImeEvent::Enabled]), vec![]);
+        // Windows: a commit, then Disabled.
+        ime_frame(&mut t, &[preedit("h")]);
+        assert_eq!(
+            ime_frame(&mut t, &[ImeEvent::Commit("好".into()), ImeEvent::Disabled]),
+            vec![egui_commit("好")]
+        );
+    }
+
+    #[test]
+    fn the_input_method_s_events_come_before_the_frame_s_keys() {
+        // A commit and the Enter after it in one frame: the text goes in first.
+        let mut t = InputTranslator::default();
+        let mut input = Input::default();
+        input.inject_ime(ImeEvent::Commit("你好".into()));
+        input.inject_key_tap(KeyCode::Enter);
+        let mut ev = Vec::new();
+        t.translate(&input, 1.0, 0.0, "", &mut ev);
+        let commit = ev.iter().position(|e| *e == egui_commit("你好")).expect("commit");
+        let enter = ev
+            .iter()
+            .position(|e| {
+                matches!(
+                    e,
+                    egui::Event::Key {
+                        key: egui::Key::Enter,
+                        ..
+                    }
+                )
+            })
+            .expect("enter");
+        assert!(commit < enter, "{ev:?}");
+    }
+
+    /// The phones' keyboards and the web's hidden input send key events with text, and a desktop
+    /// with no input method (or no `Ime` event in the frame) has nothing else: what egui gets is
+    /// what it got before the input method support, and nothing of an input method.
+    #[test]
+    fn a_frame_without_input_method_events_is_what_it_was() {
+        let mut t = InputTranslator::default();
+        let mut input = Input::default();
+        input.inject_key_event(space3d_platform::KeyEvent::press(
+            KeyCode::KeyA,
+            LogicalKey::Character("a".into()),
+        ));
+        input.inject_text("é");
+        let mut ev = Vec::new();
+        t.translate(&input, 1.0, 0.0, "", &mut ev);
+        assert_eq!(
+            ev,
+            vec![
+                egui::Event::Key {
+                    key: egui::Key::A,
+                    physical_key: Some(egui::Key::A),
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                },
+                egui::Event::Text("aé".into()),
+            ]
+        );
+        assert!(!t.ime_composing);
     }
 }
