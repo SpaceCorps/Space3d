@@ -337,6 +337,16 @@ for family in [FontFamily::Proportional, FontFamily::Monospace] {
 ctx.set_fonts(fonts); // `EguiContext::ctx()`, or in a UI system
 ```
 
+Typing these scripts into a `TextEdit` needs the OS input method, which the engine turns on
+while a text field has the focus (never for a password field), forwards as egui's `Event::Ime`
+and tells where the caret is, so the candidate list opens at the field: see
+[Input methods (IME)](platforms.md#input-methods-ime) for what is on where, the kill switch
+(`SPACE3D_NO_IME=1`) and the manual test. A game that mirrors the text it takes into another
+rule (an alphabet filter that rewrites the bound `String`) must leave it alone while a
+composition is going on (egui writes the preedit into the `String`: a rule that cuts it ends
+the composition), and filter the text once the commit has come. Linux has no bundled CJK font:
+ship one or load the system's.
+
 ## Chinese and Japanese line breaking (kinsoku)
 
 Space3d's egui breaks Chinese and Japanese text by the kinsoku (禁則処理) rules of JIS X 4051

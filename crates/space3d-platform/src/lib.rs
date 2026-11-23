@@ -13,6 +13,11 @@
 //!   either ([`Input::just_cancelled_touches`]).
 //! * [Keyboard layouts](#keyboard-layouts) — logical keys ([`KeyEvent`]) and key labels
 //!   ([`Input::key_label`]) that follow the player's layout; see [`layout`].
+//! * Input methods (IME, for typing Chinese, Japanese and Korean): on a desktop the window's
+//!   input method is on while a text field has the focus ([`TextInput`]), its composition comes
+//!   as [`Input::ime_events`] ([`ImeEvent`]) and the candidate list opens at the caret
+//!   ([`ImeArea`]); `SPACE3D_NO_IME=1` ([`ENV_NO_IME`]) or `WindowPlugin::ime` switch it off.
+//!   See docs/platforms.md.
 //! * Web: `init_web_logging()` (wasm32 only), canvas attachment via [`WindowPlugin::canvas_id`].
 //! * Mobile: `android_main_entry` (Android) and the iOS `start_app` pattern — see [`mobile`].
 //!

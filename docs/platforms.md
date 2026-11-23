@@ -26,7 +26,8 @@ space3d build --release            # binary + assets/ in dist/desktop/
 
 Linux needs `libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev` (audio, input,
 keyboard, Wayland). Graphics: DX12/Vulkan (Windows), Metal (macOS), Vulkan with GLES fallback
-(Linux).
+(Linux). Typing Chinese, Japanese or Korean into a text field goes through the OS input method:
+see [Input methods (IME)](#input-methods-ime).
 
 ## Web
 
@@ -397,6 +398,122 @@ Limitations:
 * macOS JIS keyboards: winit 0.30 has no code for the Ro key (`_`, left of right Shift; virtual
   key `0x5E`); the runner reports it as `KeyCode::IntlRo` with its OS label.
 * A table set with `set_os_layout` lasts until the next OS check unless pinned (see above).
+
+## Input methods (IME)
+
+A player who types Chinese, Japanese or Korean does it through an input method (IME): the keys go
+to the IME, which shows what is being composed (the *preedit*: `nihao`) and a list of candidates,
+and sends the finished text (the *commit*: 你好) when one is picked. winit gives a window an input
+method only when the app asks for it (`Window::set_ime_allowed`); without it Windows takes the IME
+out of the window (the language bar's mode switch does nothing, pinyin keys arrive as Latin
+letters), macOS and X11 bypass the IME, and Wayland never enables text input. The runner used to
+ask on phones only, so a game with a text field could not be typed Chinese into on a desktop.
+
+**What is on where**
+
+| | input method | how |
+|---|---|---|
+| Windows | yes | `ImmAssociateContextEx` (winit); `Enabled`, `Preedit`, `Commit`, `Disabled` from `WM_IME_*`; the IME's keys still arrive, with the logical key `Process` |
+| macOS | yes | `interpretKeyEvents` while allowed: **every** character typed into a focused text field then arrives as a commit (winit sends no key event for it), so `Input::text()` stays empty there and `ime_events()` has the text |
+| Linux (X11) | yes | XIM/ibus (winit); an allowed input context loses dead keys during a composition; the candidate list gets the caret's position only (X11 has no area) |
+| Linux (Wayland) | yes | text-input-v3 (winit); an empty `Preedit` may come with no composition: it is ignored |
+| Web | **no** | winit's web backend has no IME and sends no `Ime` event. A game with a touch keyboard (a hidden `<input>`) makes egui's IME events itself; the engine adds none, so the page's text is entered once. A desktop browser with a mouse has no IME path at all |
+| Android | **no** | a NativeActivity has no `InputConnection`: the on-screen keyboard's text arrives as key events (ASCII). See [Android](#android) |
+| iOS | as before | the on-screen keyboard arrives as key events with text; nothing changed |
+
+Linux has no CJK font bundled either: the game ships one or loads the system's
+([UI: fonts](ui.md#fonts-for-chinese-japanese-and-korean)).
+
+**What the engine does** (`WindowPlugin::ime`, on by default; desktops only):
+
+1. **The IME is on only while a text field has the focus.** `space3d-ui` sets
+   `TextInput::wanted` from egui (`text_edit_focused()`); the runner calls
+   `set_ime_allowed(wanted)` after the frame when that changes (never twice for the same state).
+   Outside a text field the IME is off, so flight keys and hotkeys stay raw even when the
+   player's IME is in Chinese mode. A **password field never gets one** (`TextInput::password`,
+   from egui's `IMEOutput::purpose`): the IME goes off when it takes the focus. (winit's
+   `set_ime_purpose` does nothing on Windows and X11, so "off" is the only way to keep a
+   password out of an IME.)
+2. **The composition is forwarded.** The runner puts winit's `Ime` events in
+   `Input::ime_events()` (`ImeEvent::{Enabled, Preedit { text, cursor }, Commit, Disabled}`; a
+   frame's worth, in order, cleared in `end_frame`). The preedit's cursor is in **characters**:
+   winit counts bytes (你好 is 6 bytes, 2 characters) and `ImeEvent::from_winit` converts, clamped
+   to the text. `space3d-ui` turns them into egui's `Event::Ime`, **before** the frame's key
+   events: a preedit with text starts or updates the composition (egui writes it into the bound
+   `String`, underlined, until it ends); an empty preedit, a commit or a `Disabled` ends it. egui
+   0.36 ignores its (deprecated) `Enabled` and `Disabled`, so the translator sends an empty
+   preedit for a `Disabled` that finds a composition, which takes the preedit text out of the
+   field. A commit is **not also `Input::text()`**: egui would enter it twice.
+3. **The candidate list opens at the caret.** `space3d-ui` reads the focused field's
+   `PlatformOutput::ime` at the end of the pass (the caret's rectangle, `IMEOutput::cursor_rect`,
+   in points) and sets `TextInput::caret` in physical pixels (points times the pass's pixels
+   per point; `ImeArea`). The runner calls `Window::set_ime_cursor_area` when it changes, and
+   once more when a composition starts or the IME comes back on (an IME may reset its windows
+   when its mode or language changes). The caret's rectangle and not the field's, because X11
+   and Wayland take a position and a cursor rectangle; the field's (`IMEOutput::rect`) is a
+   one-line change.
+4. **Keys the IME processed are not the app's.** On Windows the IME sees a key first and winit
+   still reports it, with the logical key `Process` (`VK_PROCESSKEY`): the Esc that cancels a
+   composition, the Enter that commits the letters, the Backspace that deletes one of them, the
+   arrows and Space that pick a candidate. The runner drops those presses (and the release of a
+   key it never saw go down; the release of a held key goes through, or the key would stay
+   held), so Esc does not close a chat and Backspace does not delete the text before the
+   composition. They occur only while the IME is on.
+
+The order of events differs by platform. Windows: `Enabled`, `Preedit("n")`, `Preedit("ni")`...,
+then `Preedit("")`, `Commit("你好")`, `Disabled`. macOS: an empty `Preedit` before each `Commit`.
+Wayland: empty `Preedit`s with no composition. Rely only on this: a `Preedit` with text starts or
+updates a composition; an empty one, a `Commit` or a `Disabled` ends it; a `Commit` needs no
+`Preedit` before it.
+
+**The kill switch.** `SPACE3D_NO_IME=1` (also `true`, `yes`, `on`) in the environment, or
+`WindowPlugin { ime: false, .. }`, leaves the window as it was before: no IME on a desktop, no
+`ImeEvent`, and a commit (there is none then) would be typed text. There is no setting for a
+player: set the variable for the process (a launcher, a shortcut). Phones and the web never
+change: the on-screen keyboard path (`TextInput::wanted` -> `set_ime_allowed`, the key events
+with text, the page's hidden input) is the code it was.
+
+**Not done.**
+
+* Android has no input method for the app (see above): the way out is GameActivity or a Java
+  activity with an `InputConnection`.
+* The desktop web with a mouse has no IME path. A game's hidden `<input>` is shown after a touch
+  only.
+* Linux has no bundled CJK font; the game loads one.
+* `IMEOutput::should_interrupt_composition` (an app that changes the text under a composition
+  asks the IME to drop it) is not passed on: `Memory::interrupt_ime` ends nothing at the OS.
+* egui's `ImeEvent::DeleteSurrounding` (Wayland's surrounding-text deletion) is not produced:
+  winit 0.30 has no such event.
+* A `space3d-ui` that is disabled (`EguiContext::set_enabled(false)`) reads no `Input`, and
+  `TextInput::wanted` keeps what the last pass said: a focused field then leaves the IME on.
+
+**Manual test (a real IME; headless tests cannot show it).** Windows 10 or 11, display language
+and keyboard Chinese (Simplified) with Microsoft Pinyin:
+
+1. Start the game, log in, fly.
+2. Press Enter to open the chat. Switch to the Pinyin IME with Win+Space. Shift toggles Chinese
+   and English mode: the toggle must work now (the indicator in the taskbar changes).
+3. Type `nihao`: the pinyin is shown underlined inside the field and the candidate list opens
+   right under the field (not at the screen's corner). Space or a number picks a candidate,
+   Enter sends, the line shows the glyphs.
+4. Type `nihao` again and press Backspace: it removes pinyin letters, not earlier chat text.
+   Press Esc: the composition is gone and the chat is still open.
+5. Leave the chat and fly with the IME still in Chinese mode: WASD, Q, E and Space work as
+   before (the IME is off outside a text field). The sign-in password field takes plain Latin
+   letters (no candidate list).
+6. Repeat 3 in windowed mode and in borderless fullscreen (the candidate window must be
+   visible), and on a display scaled to 150 %.
+7. With `SPACE3D_NO_IME=1` the chat takes no Chinese, as before.
+
+On a Mac (Pinyin, Kotoeri) and on Linux (ibus or fcitx5, X11 and Wayland) do step 3; on X11 dead
+keys do not work while a field has the focus. None of this has been seen with a real IME yet.
+
+The same test without a game: `cargo run -p space3d-ui --example ime_field` opens a window with a
+chat line, a password line, a "W held" line and the list of what the input method sent. With
+`RUST_LOG=ime=debug` the runner logs each `set_ime_allowed` it makes (on at the chat, off at the
+password and outside the fields, once each). `-- --frames 150` runs it scripted in the background
+(no focus stolen) and prints what `TextInput` said with the chat, the password field and nothing
+focused: that shows the runner switching the real window's IME, but composes nothing.
 
 ## Mouse buttons, focus and the UI
 
