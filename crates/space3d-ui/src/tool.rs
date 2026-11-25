@@ -86,9 +86,15 @@ pub fn set_tool_dock_area(resources: &mut Resources, rect: egui::Rect) {
 }
 
 /// The rect the tools dock inside this frame: the [`ToolDockArea`] within the screen, or the
-/// screen (no resource, or an area smaller than one tool window with its gaps).
+/// screen (no resource, or an area smaller than one tool window with its gaps). With content
+/// under the title bar (`space3d_platform::TitleBar`) the screen begins under its strip, so
+/// that no tool lies under the window buttons.
 pub(crate) fn dock_rect(resources: &Resources, ctx: &egui::Context) -> egui::Rect {
-    let screen = ctx.content_rect();
+    let mut screen = ctx.content_rect();
+    if let Some(bar) = resources.get::<space3d_platform::TitleBar>().filter(|bar| bar.active) {
+        let under = bar.height as f32 / ctx.pixels_per_point();
+        screen.min.y = screen.min.y.max(under).min(screen.max.y);
+    }
     let min = MIN_SIZE + egui::Vec2::splat(2.0 * EDGE);
     resources
         .get::<ToolDockArea>()

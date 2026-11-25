@@ -18,6 +18,9 @@
 //!   as [`Input::ime_events`] ([`ImeEvent`]) and the candidate list opens at the caret
 //!   ([`ImeArea`]); `SPACE3D_NO_IME=1` ([`ENV_NO_IME`]) or `WindowPlugin::ime` switch it off.
 //!   See docs/platforms.md.
+//! * Content under the title bar ([`WindowPlugin::content_under_title_bar`], [`title_bar`]): the
+//!   app's picture fills the title bar's strip, the window buttons sit on top of it, and the
+//!   [`TitleBar`] resource says what they cover.
 //! * Web: `init_web_logging()` (wasm32 only), canvas attachment via [`WindowPlugin::canvas_id`].
 //! * Mobile: `android_main_entry` (Android) and the iOS `start_app` pattern — see [`mobile`].
 //!
@@ -72,6 +75,7 @@ pub mod layout;
 pub mod mobile;
 mod os_buttons;
 mod runner;
+pub mod title_bar;
 pub mod touch_pointer;
 #[cfg(target_arch = "wasm32")]
 mod web;
@@ -91,6 +95,7 @@ pub use layout::{
 #[cfg(target_os = "android")]
 pub use mobile::{AndroidApp, android_app, android_main_entry};
 pub use mobile::{immersive, set_immersive};
+pub use title_bar::{TitleBar, TitleBarRect, WindowButton, WindowControl};
 #[cfg(target_arch = "wasm32")]
 pub use web::{find_canvas, init_web_logging};
 pub use window::{

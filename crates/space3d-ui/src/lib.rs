@@ -25,6 +25,10 @@
 //!   after them), which egui itself only runs from `Context::run_ui`: the built-in ones (label
 //!   text selection, drag-and-drop, `egui::debug_text`) and those added with
 //!   [`EguiContext::add_plugin`].
+//! * Content under the title bar (`space3d_platform::TitleBar`): every widget that senses a
+//!   click or a drag in the strip keeps its clicks (a backdrop over the whole screen does not),
+//!   the window buttons are painted over everything (Windows), and the engine tools dock under
+//!   the strip.
 //! * Debug overlay (**F3**, [`DebugOverlay`]): FPS, frame-time sparkline, tick / tick rate /
 //!   dropped ticks, [`space3d_render::RenderStats`] and entity count in a small monospace grid.
 //! * Profiler (**F4**, [`Profiler`]): per-system timings aggregated from the core's `system`
@@ -79,6 +83,7 @@ mod overlay;
 pub mod profiler;
 mod textures;
 pub mod theme;
+mod title_bar;
 mod tool;
 mod tracing_setup;
 

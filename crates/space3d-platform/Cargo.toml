@@ -26,8 +26,22 @@ web-sys = { workspace = true, features = ["Window", "Document", "Element", "Html
 console_error_panic_hook.workspace = true
 tracing-wasm.workspace = true
 
+# `Win32_Graphics_Gdi` (monitors, screen coordinates) and `Win32_UI_Shell` (is a taskbar set to
+# auto-hide?): content under the title bar (src/title_bar/windows.rs).
 [target.'cfg(target_os = "windows")'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { workspace = true, features = [
+    "Win32_Graphics_Gdi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# Content under the title bar (src/title_bar/macos.rs): where the traffic lights are. The objc2
+# crates winit 0.30 itself uses.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.5.2"
+objc2-app-kit = { version = "0.2.2", features = ["NSButton", "NSControl", "NSResponder", "NSView", "NSWindow"] }
+objc2-foundation = { version = "0.2.2", features = ["NSGeometry"] }
 
 # Gamepads (src/gamepad.rs). Desktop only: gilrs has no Android or iOS backend (Android pads
 # come through winit's key events, runner.rs), and the web one is not wired yet.

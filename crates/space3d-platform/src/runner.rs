@@ -26,6 +26,7 @@ use crate::ime::ImeState;
 use crate::input::{Input, KeyEvent, MouseButton, TouchPhase};
 use crate::layout::LayoutWatch;
 use crate::os_buttons::ButtonReconciler;
+use crate::title_bar::TitleBar;
 use crate::window::{PlatformEvent, WindowPlugin, WindowState};
 use glam::{UVec2, Vec2};
 use space3d_core::{App, Events};
@@ -67,6 +68,14 @@ pub(crate) struct WinitRunner {
     buttons: ButtonReconciler,
     /// The OS input method (IME) of a desktop window (`crate::ime`).
     ime: ImeState,
+    /// Windows: the window has its content under the title bar (`crate::title_bar`).
+    #[cfg(target_os = "windows")]
+    chrome: Option<crate::title_bar::windows::Chrome>,
+    /// macOS: whether the last left press was taken to drag the window (its release is not the
+    /// app's), and when and where the last one that dragged was (a second one soon after
+    /// maximises).
+    #[cfg(target_os = "macos")]
+    title_drag: (bool, Option<(Instant, Vec2)>),
     /// The pads of the OS (`crate::gamepad`), polled before every frame.
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     pads: crate::gamepad::Backend,
@@ -236,6 +245,10 @@ pub(crate) fn run(app: App, settings: WindowPlugin) {
         layout_watch: LayoutWatch::default(),
         buttons: ButtonReconciler::default(),
         ime: ImeState::new(ime),
+        #[cfg(target_os = "windows")]
+        chrome: None,
+        #[cfg(target_os = "macos")]
+        title_drag: (false, None),
         #[cfg(any(
             target_os = "windows",
             target_os = "macos",
@@ -344,13 +357,136 @@ impl WinitRunner {
         {
             attrs = crate::web::window_attributes(attrs, s.canvas_id.as_deref());
         }
+        #[cfg(target_os = "macos")]
+        if s.content_under_title_bar {
+            attrs = crate::title_bar::macos::window_attributes(attrs);
+        }
+        // Windows: made hidden, so that no frame with a system title bar is ever on screen.
+        #[cfg(target_os = "windows")]
+        let under_title_bar = s.content_under_title_bar;
+        #[cfg(target_os = "windows")]
+        if under_title_bar {
+            attrs = attrs.with_visible(false);
+        }
         match event_loop.create_window(attrs) {
-            Ok(w) => Some(Arc::new(w)),
+            Ok(w) => {
+                #[cfg(target_os = "windows")]
+                if under_title_bar {
+                    self.put_content_under_title_bar(&w);
+                    // (winit shows it as it shows any window: activated, unless it was asked
+                    // for inactive)
+                    w.set_visible(true);
+                }
+                Some(Arc::new(w))
+            }
             Err(e) => {
                 tracing::error!("failed to create window: {e}");
                 None
             }
         }
+    }
+
+    /// Windows: the title bar's area becomes part of the window's picture, which gets the size
+    /// the settings ask for (winit made room for a title bar on top of it).
+    #[cfg(target_os = "windows")]
+    fn put_content_under_title_bar(&mut self, window: &Window) {
+        use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        let Ok(handle) = window.window_handle() else {
+            tracing::warn!("title bar: the window has no handle; the system keeps the title bar");
+            return;
+        };
+        let RawWindowHandle::Win32(handle) = handle.as_raw() else {
+            return;
+        };
+        let scale = window.scale_factor();
+        // SAFETY: the window just made, on the event loop's thread, which owns it.
+        self.chrome = unsafe { crate::title_bar::windows::Chrome::install(handle.hwnd.get(), scale as f32) };
+        if let Some(chrome) = &self.chrome {
+            let size: winit::dpi::PhysicalSize<i32> =
+                winit::dpi::LogicalSize::new(f64::from(self.settings.width), f64::from(self.settings.height))
+                    .to_physical(scale);
+            chrome.fit_client(size.width, size.height);
+        }
+    }
+
+    /// Writes what the title bar is for the frame about to run ([`TitleBar`]) and drops the
+    /// app's claims of the last one.
+    fn sync_title_bar(&mut self) {
+        let Some(bar) = self.app.resources.get_mut::<TitleBar>() else {
+            return;
+        };
+        bar.clear_app_claims();
+        #[cfg(target_os = "windows")]
+        if let Some(chrome) = &self.chrome {
+            chrome.sync(bar);
+            return;
+        }
+        #[cfg(target_os = "macos")]
+        if self.settings.content_under_title_bar
+            && let Some(window) = &self.window
+            && let Some((height, lights)) = crate::title_bar::macos::measure(window)
+        {
+            let scale = window.scale_factor();
+            bar.set_traffic_lights(
+                (height * scale).round() as u32,
+                (lights * scale).round() as i32,
+                scale as f32,
+            );
+            return;
+        }
+        bar.set_inactive();
+    }
+
+    /// Hands what the frame that just ran claimed of the strip to the system's questions to
+    /// come.
+    fn publish_title_bar(&mut self) {
+        #[cfg(target_os = "windows")]
+        if let Some(chrome) = &self.chrome
+            && let Some(bar) = self.app.resources.get::<TitleBar>()
+        {
+            chrome.publish(bar);
+        }
+    }
+
+    /// macOS: a left press in the strip, outside the app's rectangles, drags the window (twice
+    /// in a row: maximises it, as the system's title bar does). `true`: the press is taken.
+    #[cfg(target_os = "macos")]
+    fn title_bar_press(&mut self) -> bool {
+        /// How soon, and how near (points), a second press must be to count as a double click.
+        const TWICE: Duration = Duration::from_millis(500);
+        const NEAR: f32 = 4.0;
+        let Some(window) = self.window.clone() else {
+            return false;
+        };
+        let Some(at) = self.input().mouse_position() else {
+            return false;
+        };
+        let width = drawable_size(&window).width;
+        let dragging = self
+            .app
+            .resources
+            .get::<TitleBar>()
+            .is_some_and(|bar| bar.drags_at(at.x as i32, at.y as i32, width));
+        if !dragging {
+            self.title_drag.1 = None;
+            return false;
+        }
+        let now = Instant::now();
+        let near = NEAR * window.scale_factor() as f32;
+        let twice = self
+            .title_drag
+            .1
+            .is_some_and(|(then, was)| now.duration_since(then) <= TWICE && was.distance(at) <= near);
+        if twice {
+            window.set_maximized(!window.is_maximized());
+            self.title_drag.1 = None;
+        } else {
+            if let Err(e) = window.drag_window() {
+                tracing::debug!("title bar: the window cannot be dragged: {e}");
+            }
+            self.title_drag.1 = Some((now, at));
+        }
+        true
     }
 
     fn on_resize(&mut self, size: UVec2) {
@@ -506,7 +642,9 @@ impl WinitRunner {
         if let Some(w) = &self.window {
             w.pre_present_notify();
         }
+        self.sync_title_bar();
         self.app.update(dt);
+        self.publish_title_bar();
         self.apply_window_state();
         if self.app.should_exit() {
             self.exiting = true;
@@ -830,6 +968,10 @@ impl ApplicationHandler for WinitRunner {
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.state().scale_factor = scale_factor;
+                #[cfg(target_os = "windows")]
+                if let Some(chrome) = &self.chrome {
+                    chrome.set_scale(scale_factor as f32);
+                }
                 self.send(PlatformEvent::ScaleFactorChanged(scale_factor));
             }
             WindowEvent::Focused(focused) => {
@@ -914,6 +1056,19 @@ impl ApplicationHandler for WinitRunner {
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let b = MouseButton::from(button);
+                // macOS: the strip under the title bar drags the window; neither that press
+                // nor its release is the app's. (On Windows the system never sends them.)
+                #[cfg(target_os = "macos")]
+                if b == MouseButton::Left {
+                    if state == ElementState::Pressed {
+                        self.title_drag.0 = self.title_bar_press();
+                        if self.title_drag.0 {
+                            return;
+                        }
+                    } else if std::mem::take(&mut self.title_drag.0) {
+                        return;
+                    }
+                }
                 match state {
                     ElementState::Pressed => self.input().os_mouse_button(b, true),
                     ElementState::Released => self.input().os_mouse_button(b, false),

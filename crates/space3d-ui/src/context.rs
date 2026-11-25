@@ -10,10 +10,11 @@
 
 use crate::input::InputTranslator;
 use crate::overlay::EguiOverlay;
+use crate::title_bar::TitleBarPass;
 use crate::{UiPlugin, UiTheme, UiThemeSync};
 use space3d_core::glam::Vec2;
 use space3d_core::{SystemCtx, Time};
-use space3d_platform::{Input, WindowState};
+use space3d_platform::{Input, TitleBar, WindowState};
 use space3d_render::{RenderOverlays, Renderer};
 use std::any::TypeId;
 use std::sync::{Arc, Mutex};
@@ -98,6 +99,8 @@ pub struct EguiContext {
     plugin_hooks: Vec<(TypeId, HookRunner)>,
     /// The pass's top-level `Ui`, handed to the plugins' begin and end hooks.
     top_ui: Option<egui::Ui>,
+    /// The strip of a window with content under its title bar (`crate::title_bar`).
+    title_bar: TitleBarPass,
 }
 
 impl std::fmt::Debug for EguiContext {
@@ -132,6 +135,7 @@ impl EguiContext {
             stats: UiFrameStats::default(),
             plugin_hooks: builtin_hooks(),
             top_ui: None,
+            title_bar: TitleBarPass::default(),
         }
     }
 
@@ -475,6 +479,12 @@ pub(crate) fn begin_frame(
 /// `Stage::PostUpdate`: end the pass, tessellate and hand the frame to the render overlay.
 pub(crate) fn end_frame(sys: &mut SystemCtx, overlay: &Arc<Mutex<EguiOverlay>>) {
     let natives = crate::textures::resolve_native_views(sys.resources);
+    // A window with content under its title bar: what its strip is this frame.
+    let title_bar = sys.resources.get::<TitleBar>().filter(|bar| bar.active).map(|bar| {
+        let buttons = bar.buttons.filter(|_| bar.draw_buttons);
+        (bar.height, buttons, bar.maximized)
+    });
+    let focused = sys.resources.get::<WindowState>().is_none_or(|w| w.focused);
     // A focused text field asks the platform for typed text: on a phone, the on-screen
     // keyboard (`space3d_platform::TextInput`; the last pass's answer, one frame late).
     // (a text field, not any focus: a focused button takes Enter and wants no keyboard on screen)
@@ -489,8 +499,9 @@ pub(crate) fn end_frame(sys: &mut SystemCtx, overlay: &Arc<Mutex<EguiOverlay>>) 
     };
     if !e.in_pass {
         if !e.enabled {
-            // Nothing to draw while disabled.
+            // Nothing to draw while disabled, and nothing of the UI's in the title bar.
             crate::overlay::lock(overlay).clear_frame();
+            publish_title_bar_claims(sys);
         }
         return;
     }
@@ -511,6 +522,13 @@ pub(crate) fn end_frame(sys: &mut SystemCtx, overlay: &Arc<Mutex<EguiOverlay>>) 
     let any_down = e.ctx.input(|i| i.pointer.any_down());
     e.wants_pointer = e.ctx.egui_is_using_pointer() || (e.pointer_over && !any_down);
     e.wants_keyboard = e.ctx.egui_wants_keyboard_input();
+    // After all UI: what of the title bar's strip is the UI's, and the window buttons over it.
+    if let Some((height, buttons, maximized)) = title_bar {
+        e.title_bar.collect(&e.ctx, height, e.pixels_per_point);
+        if let Some(buttons) = buttons {
+            crate::title_bar::paint_buttons(&e.ctx, &buttons, maximized, focused, e.pixels_per_point);
+        }
+    }
     let span = part("ui::end_frame.pass");
     let output = e.end_pass();
     drop(span);
@@ -568,6 +586,25 @@ pub(crate) fn end_frame(sys: &mut SystemCtx, overlay: &Arc<Mutex<EguiOverlay>>) 
     // the platform acts on the first pass of a run of them, and only while a composition is going on)
     if text_input.interrupt != interrupt {
         text_input.interrupt = interrupt;
+    }
+    publish_title_bar_claims(sys);
+}
+
+/// Hands the strip's claims of the pass (none without one) to `space3d_platform::TitleBar`.
+fn publish_title_bar_claims(sys: &mut SystemCtx) {
+    if sys.resources.get::<TitleBar>().is_none() {
+        return;
+    }
+    let Some(e) = sys.resources.get_mut::<EguiContext>() else {
+        return;
+    };
+    let mut claims = std::mem::take(&mut e.title_bar.claims);
+    if let Some(bar) = sys.resources.get_mut::<TitleBar>() {
+        bar.set_ui_claims(&mut claims);
+    }
+    // The buffer that came back, for the next pass.
+    if let Some(e) = sys.resources.get_mut::<EguiContext>() {
+        e.title_bar.claims = claims;
     }
 }
 
