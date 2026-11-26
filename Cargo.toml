@@ -62,8 +62,8 @@ wgpu = "30.0.1"
 naga = "30.0.1"
 winit = "0.30.13"          # latest stable; 0.31 is still beta and egui 0.36 targets 0.30
 gilrs = "0.11.2"           # gamepads on desktop (Windows.Gaming.Input, evdev, IOKit); Apache-2.0/MIT
-egui = "0.36.2"
-egui-wgpu = { version = "0.36.2", features = ["winit"] }
+egui = "0.37.0"
+egui-wgpu = { version = "0.37.0", features = ["winit"] }
 egui-winit = "0.36.2"
 egui_extras = "0.36.2"
 raw-window-handle = "0.6.2"
