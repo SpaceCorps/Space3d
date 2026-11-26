@@ -45,6 +45,20 @@ pub struct WindowPlugin {
     /// variable `SPACE3D_NO_IME=1` switches it off whatever this says. Off, a desktop window is
     /// as it was before the engine knew input methods. Phones and the web are not affected.
     pub ime: bool,
+    /// Content under the title bar: the app's picture fills the whole window, the title bar's
+    /// strip included, and the window buttons sit on top of it. Default `false`.
+    ///
+    /// The [`crate::TitleBar`] resource says what the strip is and what the buttons cover, and
+    /// takes the app's claims on it ([`crate::title_bar`]). **Windows**: the window keeps what
+    /// a system title bar does (dragging, double click, Snap Layouts, Aero Snap, resizing from
+    /// every edge); the three buttons are the app's to draw, which `space3d-ui` does (an app
+    /// without it draws them from [`crate::TitleBar::buttons`]). **macOS**: a full-size content
+    /// view under a transparent title bar without a title; the traffic lights stay. **Linux,
+    /// web, Android, iOS**: nothing changes.
+    ///
+    /// A window whose caption is taken off (fullscreen: winit's, or an app's own) has no title
+    /// bar while it is off.
+    pub content_under_title_bar: bool,
 }
 
 /// An RGBA8 window icon (see [`WindowPlugin::icon`]).
@@ -130,6 +144,7 @@ impl Default for WindowPlugin {
             touch_as_mouse: false,
             icon: None,
             ime: true,
+            content_under_title_bar: false,
         }
     }
 }
@@ -160,6 +175,7 @@ impl Plugin for WindowPlugin {
         });
         app.init_resource::<WindowCursor>();
         app.init_resource::<SafeArea>();
+        app.init_resource::<crate::title_bar::TitleBar>();
         if self.touch_as_mouse {
             app.resources.init::<crate::touch_pointer::TouchMouse>().enabled = true;
         }

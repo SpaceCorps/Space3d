@@ -704,6 +704,75 @@ MouseButtonCause::OsReconciled)` is what the OS check does. Injected presses
 (`inject_mouse_button_down`) are never subject to the OS check; only the runner's own window
 events are (crate-internal `Input::os_mouse_button`).
 
+## Content under the title bar
+
+`WindowPlugin::content_under_title_bar` (default `false`) lets the app's picture fill the whole
+window, the title bar's strip included. The window buttons sit on top of the picture.
+
+```rust
+app.add_plugin(WindowPlugin {
+    title: "My game".into(),
+    content_under_title_bar: true,
+    ..WindowPlugin::default()
+});
+```
+
+| platform | what changes | the window buttons |
+|---|---|---|
+| Windows | the client area begins at the window's top; the sizing frame at the left, right and bottom stays the system's | `space3d-ui` draws them at the top right; the system still knows where they are, so Windows 11 shows Snap Layouts over maximise |
+| macOS | full-size content view under a transparent title bar without a title | the system's traffic lights, at the top left |
+| Linux, web, Android, iOS | nothing | as without the option |
+
+In fullscreen (winit's, or an app's own that takes `WS_CAPTION` off) there is no title bar, and
+`TitleBar::active` is `false`.
+
+**What the app has to do.** The `TitleBar` resource says what the strip is, in physical pixels of
+the window's picture:
+
+* `active`, `height`: whether the picture is under the title bar now, and how high the strip is;
+* `controls`, `left_inset()`, `right_inset(width)`: what the window buttons cover. Put nothing
+  there that the player must see or click.
+
+The rest of the strip drags the window, and a double click maximises it. A click reaches the app
+instead where the app claims it:
+
+* `space3d-ui` claims every egui widget in the strip that senses a click or a drag, floating
+  windows included. A backdrop that covers the whole screen is not claimed, so the strip still
+  drags behind a modal sheet. There is nothing to call.
+* An app with hit areas of its own calls `TitleBar::claim(rect)` every frame it wants them.
+* `TitleBar::keep_strip()` keeps the whole strip for one frame: for a game that needs every
+  click while the pointer steers. The window buttons still work.
+
+The platform asks about the last frame's rectangles, so a new widget takes clicks from the frame
+after it first appears. The window buttons beat every claim: a window must always close.
+
+**Windows.** The window keeps the styles of a decorated window and gets a window procedure in
+front of winit's (`space3d_platform::title_bar`):
+
+* dragging, Aero Snap, double click, the system menu, Win+arrows and the minimise and maximise
+  animations stay the system's;
+* it resizes from every edge; at the top, from a band 8 logical pixels high (none while
+  maximised, so the corner of the screen closes the window);
+* a maximised window is not cut off, and it leaves 2 pixels free at an edge with an auto-hide
+  taskbar;
+* a window that cannot be resized has a dimmed maximise button;
+* the asked window size is the picture's size, at creation and after a move to a monitor with
+  another scale (winit alone would add a title bar's height).
+
+`space3d-ui` paints the buttons above everything it draws, and its docked tools stay below the
+strip. Set `TitleBar::draw_buttons` to `false` to draw your own from `TitleBar::buttons` (each
+says where it is and whether it is enabled, hovered or pressed). An app without `space3d-ui` must
+draw them: the system draws none.
+
+**macOS.** A press in the strip that nothing claims drags the window, and a second one within half
+a second maximises or restores it. (It does not read the "double-click a window's title bar to"
+setting of System Settings.)
+
+**Tests and pictures** need no window: insert `TitleBar::simulated_windows(width, scale,
+maximized)` or `TitleBar::simulated_macos(scale)`, step the app, and read `claims()`
+(`crates/space3d-ui/tests/title_bar.rs`). The Windows window procedure has tests on real windows
+that are never shown (`crates/space3d-platform/src/title_bar/windows/tests.rs`).
+
 ## The mouse cursor and the window icon
 
 The pointer shape over the window is the `WindowCursor` resource (inserted by `WindowPlugin`).
