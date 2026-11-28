@@ -8,9 +8,6 @@ use space3d::assets::{AssetLoader, HdrImageLoader, LoadContext};
 use space3d::prelude::*;
 use space3d::render::CubemapSource;
 
-const HDRI_2K: &[u8] = include_bytes!("../assets/hdri/sunset_jhbcentral_2k.hdr");
-const HDRI_1K: &[u8] = include_bytes!("../assets/hdri/sunset_jhbcentral_1k.hdr");
-
 /// The sky and where its sun is.
 pub struct Sky {
     pub source: CubemapSource,
@@ -19,7 +16,11 @@ pub struct Sky {
 }
 
 pub fn sky(low: bool, face: u32) -> Option<Sky> {
-    let bytes = if low { HDRI_1K } else { HDRI_2K };
+    let bytes = if low {
+        asset!("hdri/sunset_jhbcentral_1k.hdr")
+    } else {
+        asset!("hdri/sunset_jhbcentral_2k.hdr")
+    }?;
     let hdr = HdrImageLoader
         .load(bytes, &LoadContext::new("sunset_jhbcentral.hdr"))
         .ok()?;
@@ -108,13 +109,17 @@ fn surface(diff: &[u8], arm: &[u8], nor: &[u8], low: bool, base_mul: f32, rough_
     })
 }
 
+/// The three maps of a set, `None` while a file is missing.
 macro_rules! set {
     ($name:literal) => {
-        (
-            include_bytes!(concat!("../assets/tex/", $name, "_Diffuse.jpg")).as_slice(),
-            include_bytes!(concat!("../assets/tex/", $name, "_arm.jpg")).as_slice(),
-            include_bytes!(concat!("../assets/tex/", $name, "_nor_gl.jpg")).as_slice(),
-        )
+        match (
+            asset!(concat!("tex/", $name, "_Diffuse.jpg")),
+            asset!(concat!("tex/", $name, "_arm.jpg")),
+            asset!(concat!("tex/", $name, "_nor_gl.jpg")),
+        ) {
+            (Some(d), Some(a), Some(n)) => (d, a, n),
+            _ => return None,
+        }
     };
 }
 
@@ -187,7 +192,7 @@ macro_rules! car {
     ($name:literal, $half_len:expr, $half_w:expr, $scale:expr, $weight:expr) => {
         (
             $name,
-            include_bytes!(concat!("../assets/models/kenney_", $name, ".glb")).as_slice(),
+            asset!(concat!("models/kenney_", $name, ".glb")),
             $half_len,
             $half_w,
             $scale,
@@ -213,7 +218,7 @@ pub fn models() -> Models {
         .into_iter()
         .filter_map(|(name, bytes, half_len, half_w, scale, weight)| {
             Some(CarModel {
-                model: prepared(bytes, name)?,
+                model: prepared(bytes?, name)?,
                 half_len,
                 half_w,
                 scale,
@@ -223,18 +228,9 @@ pub fn models() -> Models {
         .collect();
     Models {
         cars,
-        hydrant: prepared(
-            include_bytes!("../assets/models/polyhaven_fire_hydrant.glb"),
-            "hydrant.glb",
-        ),
-        trash: prepared(
-            include_bytes!("../assets/models/polyhaven_metal_trash_can.glb"),
-            "trash.glb",
-        ),
-        bench: prepared(
-            include_bytes!("../assets/models/polyhaven_painted_wooden_bench.glb"),
-            "bench.glb",
-        ),
+        hydrant: asset!("models/polyhaven_fire_hydrant.glb").and_then(|b| prepared(b, "hydrant.glb")),
+        trash: asset!("models/polyhaven_metal_trash_can.glb").and_then(|b| prepared(b, "trash.glb")),
+        bench: asset!("models/polyhaven_painted_wooden_bench.glb").and_then(|b| prepared(b, "bench.glb")),
     }
 }
 

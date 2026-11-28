@@ -20,6 +20,9 @@
 //! is generated off the frame (`spawn_compute`) once the tier is known; the city appears when it
 //! is done.
 
+#[macro_use]
+mod files;
+
 mod city;
 mod effects;
 mod flight;
@@ -137,6 +140,8 @@ struct Demo {
     spots: Vec<LightSpot>,
     cars: Vec<Car>,
     walkers: Vec<Pedestrian>,
+    /// The web build fetching its assets, and the tier it will generate for.
+    fetching: Option<(std::sync::Arc<files::Progress>, bool, u32)>,
     slots: Vec<Slot>,
     hud: bool,
     shots: Option<Shots>,
@@ -203,6 +208,7 @@ fn add_game(app: &mut App, headless: bool) {
         pos: Vec3::ZERO,
         spots: Vec::new(),
         cars: Vec::new(),
+        fetching: None,
         walkers: Vec::new(),
         slots: Vec::new(),
         hud: !headless,
@@ -389,6 +395,14 @@ fn choose_quality(ctx: &mut SystemCtx) {
         GraphicsQuality::Medium => 768,
         _ => 1024,
     };
+    match files::start(low) {
+        Some(progress) => ctx.resources.expect_mut::<Demo>().fetching = Some((progress, low, face)),
+        None => start_generation(ctx, low, face),
+    }
+}
+
+/// The assets are in (or embedded): generate the city off the frame.
+fn start_generation(ctx: &mut SystemCtx, low: bool, face: u32) {
     let facades = |kinds: [Facade; 2]| Textures {
         facades: kinds
             .into_iter()
@@ -440,6 +454,11 @@ macro_rules! poll_into {
 
 fn load_content(ctx: &mut SystemCtx) {
     let d = ctx.resources.expect_mut::<Demo>();
+    if d.fetching.as_ref().is_some_and(|(p, ..)| p.finished()) {
+        let (_, low, face) = d.fetching.take().unwrap();
+        start_generation(ctx, low, face);
+        return;
+    }
     d.dressed += u64::from(d.sky.is_some());
     let Some(l) = d.loading.as_mut() else {
         return;
@@ -744,15 +763,21 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
         _ => 700,
     };
     let people_meshes: Vec<[MeshHandle; 2]> = (0..people::OUTFITS as u32)
-        .map(|i| {
+        .map_while(|i| {
             let o = people::outfit(i);
-            [
-                assets.add_mesh(people::mesh(&o, false)),
-                assets.add_mesh(people::mesh(&o, true)),
-            ]
+            Some([
+                assets.add_mesh(people::mesh(&o, false)?),
+                assets.add_mesh(people::mesh(&o, true)?),
+            ])
         })
         .collect();
     let mut pedestrians = Vec::new();
+    // (no pedestrian file: no pedestrians)
+    let walkers = if people_meshes.len() == people::OUTFITS {
+        walkers
+    } else {
+        Vec::new()
+    };
     for w in walkers
         .into_iter()
         .filter(|w| path.iter().any(|q| q.distance_squared(w.origin) < 75.0 * 75.0))
@@ -1184,6 +1209,19 @@ fn screenshots(ctx: &mut SystemCtx) {
 
 fn hud(ui: &egui::Context, ctx: &mut SystemCtx) {
     let d = ctx.resources.expect::<Demo>();
+    // until the city is up: what it is waiting for (shown even with the panel hidden)
+    if d.sky.is_none() && !d.paused {
+        let what = match &d.fetching {
+            Some((p, ..)) => format!("Loading the city: fetching assets, {}", p.text()),
+            None if d.quality.is_some() => "Loading the city: generating…".to_string(),
+            None => "Loading the city…".to_string(),
+        };
+        egui::Area::new(egui::Id::new("city_loading"))
+            .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+            .show(ui, |ui| {
+                ui.heading(what);
+            });
+    }
     if !d.hud {
         return;
     }
@@ -1206,7 +1244,14 @@ fn hud(ui: &egui::Context, ctx: &mut SystemCtx) {
                 if d.timings {
                     row("GPU scopes", format!("{gpu:.2} ms"));
                 }
-                row("city", if d.sky.is_some() { "ready" } else { "generating…" }.into());
+                row(
+                    "city",
+                    match (&d.fetching, d.sky.is_some()) {
+                        (Some((p, ..)), _) => format!("fetching {}", p.text()),
+                        (None, true) => "ready".into(),
+                        _ => "generating…".into(),
+                    },
+                );
                 row(
                     "camera",
                     if d.free {
