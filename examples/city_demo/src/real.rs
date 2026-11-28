@@ -2,7 +2,7 @@
 //! pavement and roofs, embedded in the binary. Every loader returns `None` on a decode error
 //! and the caller falls back to the procedural stand-ins.
 
-use crate::procgen::TextureSet;
+use crate::procgen::{Facade, TextureSet};
 use space3d::assets::edit::texture::decode_image;
 use space3d::assets::{AssetLoader, HdrImageLoader, LoadContext};
 use space3d::prelude::*;
@@ -121,7 +121,7 @@ macro_rules! set {
 /// Wet asphalt (`asphalt_02`).
 pub fn asphalt(low: bool) -> Option<TextureSet> {
     let (d, a, n) = set!("asphalt_02");
-    surface(d, a, n, low, 0.62, 0.5)
+    surface(d, a, n, low, 0.4, 0.35)
 }
 
 /// Pavement (`concrete_pavement`), damp.
@@ -222,4 +222,24 @@ pub fn models() -> Models {
             "bench.glb",
         ),
     }
+}
+
+/// A real wall for a facade kind and the meters one repeat of it covers (`None` for glass:
+/// curtain walls are smooth dark metal, drawn from the facade atlas alone).
+pub fn wall(kind: Facade, low: bool) -> Option<(TextureSet, f32)> {
+    let (set, tile) = match kind {
+        Facade::Concrete => (set!("brushed_concrete_04"), 3.0),
+        Facade::Brick => (set!("brick_wall_10"), 1.6),
+        Facade::Stone => (set!("beige_wall_002"), 2.5),
+        Facade::Glass => return None,
+    };
+    surface(
+        set.0,
+        set.1,
+        set.2,
+        low,
+        if kind == Facade::Brick { 1.0 } else { 0.95 },
+        0.95,
+    )
+    .map(|s| (s, tile))
 }

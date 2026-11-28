@@ -289,10 +289,28 @@ pub fn facade_textures(kind: Facade, seed: u32) -> TextureSet {
             Facade::Stone => stone_texel(x, y, cx, cy, lx, ly, seed + 300),
         }
     });
-    layers.finish(match kind {
+    let mut set = layers.finish(match kind {
         Facade::Brick => 1.4,
         _ => 1.0,
-    })
+    });
+    // Where a real wall texture is tiled underneath, only the windows (glass, frames) are
+    // opaque: the rest of the atlas is cut away (alpha mask).
+    if kind != Facade::Glass {
+        for y in 0..h {
+            for x in 0..w {
+                let (lx, ly) = (x % CELL, y % CELL);
+                let window = match kind {
+                    Facade::Concrete => inside(lx, ly, 7, 10, 57, 50),
+                    Facade::Brick => inside(lx, ly, 14, 12, 50, 50),
+                    _ => inside(lx, ly, 16, 10, 48, 54),
+                };
+                let mut p = set.base.get(x, y);
+                p[3] = if window { 255 } else { 0 };
+                set.base.set(x, y, p);
+            }
+        }
+    }
+    set
 }
 
 fn window_glass(lit: &Lit, ly: u32, y0: u32, y1: u32, depth: f32) -> Texel {

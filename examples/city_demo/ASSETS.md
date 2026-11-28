@@ -13,6 +13,9 @@ version in `src/procgen.rs`.
 | Joburg Central Sunset (`sunset_jhbcentral`) | https://polyhaven.com/a/sunset_jhbcentral | Greg Zaal (HDRI), Dimitrios Savva (photography) | `assets/hdri/sunset_jhbcentral_2k.hdr` (Medium and up), `..._1k.hdr` (Low / web) | skybox and image-based light; its sun sets the sun's elevation |
 | Asphalt 02 (`asphalt_02`) | https://polyhaven.com/a/asphalt_02 | Rob Tuytel | `assets/tex/asphalt_02_{Diffuse,arm,nor_gl}.jpg` (1k) | roads (darkened and made smoother in code: wet) |
 | Concrete Pavement (`concrete_pavement`) | https://polyhaven.com/a/concrete_pavement | Charlotte Baglioni | `assets/tex/concrete_pavement_{Diffuse,arm,nor_gl}.jpg` (1k) | pavements |
+| Brick Wall 10 (`brick_wall_10`) | https://polyhaven.com/a/brick_wall_10 | Dimitrios Savva | `assets/tex/brick_wall_10_{Diffuse,arm,nor_gl}.jpg` (1k) | brick facades, tiled at 1.6 m |
+| Beige Wall 002 (`beige_wall_002`) | https://polyhaven.com/a/beige_wall_002 | Dimitrios Savva, Rico Cilliers | `assets/tex/beige_wall_002_{Diffuse,arm,nor_gl}.jpg` (1k) | stone facades, tiled at 2.5 m |
+| Brushed Concrete 04 (`brushed_concrete_04`) | https://polyhaven.com/a/brushed_concrete_04 | Amal Kumar | `assets/tex/brushed_concrete_04_{Diffuse,arm,nor_gl}.jpg` (1k) | concrete facades, tiled at 3 m |
 | Bitumen (`bitumen`) | https://polyhaven.com/a/bitumen | Rob Tuytel | `assets/tex/bitumen_{Diffuse,arm,nor_gl}.jpg` (1k) | roofs |
 
 | Car Kit 3.1 (Kenney) | https://kenney.nl/assets/car-kit, downloaded from https://opengameart.org/content/car-kit (page states CC0, uploader Kenney) | Kenney | `assets/models/kenney_{sedan,sedan-sports,hatchback-sports,taxi,suv,suv-luxury,van,delivery,truck,police}.glb` (GLB repacked with its `colormap.png` embedded) | moving and parked cars; head and tail lights are my emissive overlay |
@@ -26,3 +29,5 @@ geometry and textures are unchanged. The Low tier halves the textures in code an
 Procedural (no suitable CC0 source found or reachable): facades and windows, shopfronts, the
 bus, lamps, signals, trees, pedestrians, steam and rain. The procedural cars are also the
 fallback when a model fails to load.
+
+The repacked Kenney GLBs have a desaturated colormap so the cars sit in the HDRI lighting. All CC0 per the Poly Haven API. Total assets: 34 MB.

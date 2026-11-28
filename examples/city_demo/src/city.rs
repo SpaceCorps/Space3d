@@ -67,6 +67,8 @@ pub struct LightSpot {
 /// What one chunk draws.
 pub struct ChunkMeshes {
     pub facade: [MeshData; 4],
+    /// Tiled real wall textures under the windows (empty for glass).
+    pub wall: [MeshData; 4],
     pub shop: MeshData,
     pub roof: MeshData,
     pub paving: MeshData,
@@ -83,6 +85,7 @@ pub struct ChunkMeshes {
 #[derive(Default)]
 struct ChunkBuild {
     facade: [MeshBuilder; 4],
+    wall: [MeshBuilder; 4],
     shop: MeshBuilder,
     roof: MeshBuilder,
     paving: MeshBuilder,
@@ -97,8 +100,10 @@ struct ChunkBuild {
 impl ChunkBuild {
     fn finish(self) -> ChunkMeshes {
         let [a, b, c, d] = self.facade;
+        let [wa, wb, wc, wd] = self.wall;
         ChunkMeshes {
             facade: [a.finish(), b.finish(), c.finish(), d.finish()],
+            wall: [wa.finish(), wb.finish(), wc.finish(), wd.finish()],
             shop: self.shop.finish(),
             roof: self.roof.finish(),
             paving: self.paving.finish(),
@@ -219,7 +224,7 @@ fn ground_mesh() -> MeshData {
         }
     }
     // far ground out to the horizon
-    let far = 28000.0;
+    let far = 6000.0;
     for (a, bb) in [
         ((-far, -far), (far, -half)),
         ((-far, half), (far, far)),
@@ -322,6 +327,20 @@ fn puddles(b: &mut MeshBuilder, along_z: bool, at: f32, a: f32, c: f32, seed: u3
     }
 }
 
+/// A thin wire from `a` to `b` sagging by `sag` meters in the middle.
+fn wire(b: &mut MeshBuilder, a: Vec3, c: Vec3, sag: f32) {
+    let n = 6;
+    let at = |i: i32| {
+        let t = i as f32 / n as f32;
+        a.lerp(c, t) - Vec3::Y * sag * 4.0 * t * (1.0 - t)
+    };
+    for i in 0..n {
+        let (p, q) = (at(i), at(i + 1));
+        let d = q - p;
+        b.cylinder(p, d.normalize(), 0.02, d.length(), 4, cell::RUBBER, Vec4::ONE);
+    }
+}
+
 fn intersection(
     ch: &mut ChunkBuild,
     lights: &mut Vec<LightSpot>,
@@ -397,6 +416,17 @@ fn intersection(
                 intensity: 3.0,
                 range: 11.0,
             });
+        }
+    }
+    // overhead wires between the signal poles (sagging catenaries)
+    if x.abs() < 330.0 && z.abs() < 330.0 {
+        for (p0, p1) in [
+            (Vec3::new(x - 8.8, 5.0, z - 8.8), Vec3::new(x + 8.8, 5.0, z - 8.8)),
+            (Vec3::new(x - 8.8, 5.0, z + 8.8), Vec3::new(x + 8.8, 5.0, z + 8.8)),
+            (Vec3::new(x - 8.8, 5.0, z - 8.8), Vec3::new(x - 8.8, 5.0, z + 8.8)),
+            (Vec3::new(x + 8.8, 5.0, z - 8.8), Vec3::new(x + 8.8, 5.0, z + 8.8)),
+        ] {
+            wire(&mut ch.props_cold, p0, p1, 0.55);
         }
     }
     if rng.chance(0.3) {
@@ -663,27 +693,42 @@ fn building(
             let v = |y: f32| (voff + (top_ref - y) / FLOOR_M) / FLOORS as f32;
             let wall_y0 = if part.fs == 0 { SHOP_M } else { y0 };
             let bl = Vec3::new(corner.x, wall_y0, corner.z);
-            let up = Vec3::Y * (y1 - wall_y0);
-            let br = bl + right * len;
             let uvs = |ya: f32, yb: f32| [[u0, v(ya)], [u1, v(ya)], [u1, v(yb)], [u0, v(yb)]];
+            // Two layers: the real wall texture tiled at world scale, and the window atlas just
+            // in front of it (alpha-masked). Glass towers are the atlas alone.
+            let has_wall = kind != Facade::Glass;
+            let off = if has_wall { n * 0.07 } else { Vec3::ZERO };
+            let uo = rng.f() * 12.0;
+            let band = |ch: &mut ChunkBuild, ya: f32, yb: f32, ca: Vec4, cb: Vec4| {
+                let a = Vec3::new(bl.x, ya, bl.z);
+                let b2 = a + right * len;
+                let up = Vec3::Y * (yb - ya);
+                ch.facade[slot].quad_colors(
+                    [a + off, b2 + off, b2 + off + up, a + off + up],
+                    n,
+                    uvs(ya, yb),
+                    [ca, ca, cb, cb],
+                );
+                if has_wall {
+                    let (u0m, u1m) = (uo / 4.0, (uo + len) / 4.0);
+                    ch.wall[slot].quad_colors(
+                        [a, b2, b2 + up, a + up],
+                        n,
+                        [[u0m, -ya / 4.0], [u1m, -ya / 4.0], [u1m, -yb / 4.0], [u0m, -yb / 4.0]],
+                        [ca, ca, cb, cb],
+                    );
+                }
+            };
             if part.fs == 0 {
                 // baked ambient occlusion: the wall darkens toward the street
                 let ym = wall_y0 + (y1 - wall_y0).min(9.0);
-                let upm = Vec3::Y * (ym - wall_y0);
-                let dark = tint * Vec4::new(0.5, 0.5, 0.5, 1.0);
-                ch.facade[slot].quad_colors(
-                    [bl, br, br + upm, bl + upm],
-                    n,
-                    uvs(wall_y0, ym),
-                    [dark, dark, tint, tint],
-                );
+                let dark = tint * Vec4::new(0.45, 0.45, 0.45, 1.0);
+                band(ch, wall_y0, ym, dark, tint);
                 if y1 > ym + 0.01 {
-                    let (bl2, br2) = (bl + upm, br + upm);
-                    let up2 = Vec3::Y * (y1 - ym);
-                    ch.facade[slot].quad([bl2, br2, br2 + up2, bl2 + up2], n, uvs(ym, y1), tint);
+                    band(ch, ym, y1, tint, tint);
                 }
             } else {
-                ch.facade[slot].quad([bl, br, br + up, bl + up], n, uvs(wall_y0, y1), tint);
+                band(ch, wall_y0, y1, tint, tint);
             }
             wall_details(
                 ch,

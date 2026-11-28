@@ -61,6 +61,7 @@ struct Rest {
     paving: TextureSet,
     roof: TextureSet,
     palette: procgen::Palette,
+    walls: [Option<(TextureSet, f32)>; 4],
     glow: ImageData,
 }
 
@@ -306,7 +307,14 @@ fn setup(ctx: &mut SystemCtx) {
             ..Fog::default()
         })
         .with_ssao(Ssao::on().with_radius(1.5).with_intensity(1.0))
-        .with_ssr(Ssr::on().with_distance(120.0).with_max_roughness(0.5))
+        .with_ssr(
+            Ssr::on()
+                .with_distance(120.0)
+                .with_max_roughness(0.75)
+                .with_blur(1.5, 4.0)
+                .with_hdr_boost(1.0)
+                .with_denoise(2),
+        )
     } else {
         post
     };
@@ -319,7 +327,7 @@ fn setup(ctx: &mut SystemCtx) {
             .with_projection(Projection::Perspective {
                 fov_y: knob("CITY_FOV", 46.0).to_radians(),
                 near: 0.3,
-                far: 30000.0,
+                far: 6000.0,
             }),
         post,
     ));
@@ -394,6 +402,12 @@ fn choose_quality(ctx: &mut SystemCtx) {
             paving: real::paving(low).unwrap_or_else(|| procgen::paving_textures(33)),
             roof: real::roof(low).unwrap_or_else(|| procgen::roof_textures(44)),
             palette: procgen::palette(),
+            walls: [
+                real::wall(Facade::Concrete, low),
+                real::wall(Facade::Brick, low),
+                None,
+                real::wall(Facade::Stone, low),
+            ],
             glow: procgen::glow_texture(),
         })),
         city: Some(space3d::tasks::spawn_compute(city::generate)),
@@ -482,6 +496,15 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
     let sun = sky.sun;
     let sky = assets.add_cubemap(sky.source);
     let emissive = knob("CITY_WINDOWS", 1.8);
+    // Real walls (tiled at world scale) under alpha-masked window layers; glass towers are the
+    // atlas alone (opaque, smooth, dark, metallic).
+    let mut wall_mats: [Option<Material>; 4] = [None, None, None, None];
+    for (slot, w) in rest.walls.into_iter().enumerate() {
+        if let Some((set, tile)) = w {
+            let maps = upload(assets, set);
+            wall_mats[slot] = Some(lit_material(&maps, 0.0).with_tiling(4.0 / tile, 4.0 / tile));
+        }
+    }
     let mut facade_mats: [Option<Material>; 4] = [None, None, None, None];
     for (kind, set) in a.facades.into_iter().chain(b.facades) {
         let maps = upload(assets, set);
@@ -491,7 +514,12 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
             Facade::Glass => 2,
             Facade::Stone => 3,
         };
-        facade_mats[slot] = Some(lit_material(&maps, emissive));
+        let mat = lit_material(&maps, emissive);
+        facade_mats[slot] = Some(if wall_mats[slot].is_some() {
+            mat.with_alpha_mask(0.5)
+        } else {
+            mat
+        });
     }
     let shop_mat = lit_material(&upload(assets, rest.shop), knob("CITY_SHOPS", 1.4));
     let road_mat = lit_material(&upload(assets, rest.asphalt), 0.0);
@@ -525,6 +553,11 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
         street_props.extend(chunk.props);
         for (i, f) in chunk.facade.into_iter().enumerate() {
             spawn_mesh(ctx.world, assets, f, facade_mats[i].as_ref().unwrap());
+        }
+        for (i, w) in chunk.wall.into_iter().enumerate() {
+            if let Some(m) = &wall_mats[i] {
+                spawn_mesh(ctx.world, assets, w, m);
+            }
         }
         spawn_mesh(ctx.world, assets, chunk.shop, &shop_mat);
         spawn_mesh(ctx.world, assets, chunk.roof, &roof_mat);
@@ -720,6 +753,7 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
         let mut sb = Skybox::new(sky);
         sb.rotation = rot;
         sb.intensity = knob("CITY_SKY", 0.55);
+        sb.ground = Some((Vec3::new(0.52, 0.46, 0.55) * knob("CITY_GROUND", 0.7), 0.07));
         let _ = ctx.world.insert(cam, (sb, env));
     }
     let d = ctx.resources.expect_mut::<Demo>();
