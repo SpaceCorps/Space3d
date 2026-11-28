@@ -227,6 +227,18 @@ pub struct Ssr {
     pub max_roughness: f32,
     /// Fraction of the screen near its border that fades to the environment. Default 0.1.
     pub edge_fade: f32,
+    /// Blur of the reflection with roughness and ray length (1 = the default look, 0 = mirror
+    /// sharp at every roughness). Default 1.
+    pub roughness_blur: f32,
+    /// Vertical stretch of that blur (>= 1): on wet, rough ground the reflection of a light
+    /// smears into a vertical glare streak. Default 3.
+    pub stretch: f32,
+    /// Extra gain of reflected radiance above display white (lights, emissives), up to
+    /// `1 + hdr_boost` at 4x white. Default 1.
+    pub hdr_boost: f32,
+    /// Depth-aware blur taps each side of the reflection (0 = none): hides the ray-march
+    /// noise at silhouettes and rims, no temporal history. 0..=4. Default 2.
+    pub denoise: u32,
 }
 
 impl Default for Ssr {
@@ -239,6 +251,10 @@ impl Default for Ssr {
             intensity: 1.0,
             max_roughness: 0.55,
             edge_fade: 0.1,
+            roughness_blur: 1.0,
+            stretch: 3.0,
+            hdr_boost: 1.0,
+            denoise: 2,
         }
     }
 }
@@ -269,6 +285,22 @@ impl Ssr {
     /// Set [`Self::max_roughness`].
     pub fn with_max_roughness(mut self, r: f32) -> Self {
         self.max_roughness = r;
+        self
+    }
+    /// Set [`Self::roughness_blur`] and [`Self::stretch`].
+    pub fn with_blur(mut self, roughness_blur: f32, stretch: f32) -> Self {
+        self.roughness_blur = roughness_blur;
+        self.stretch = stretch;
+        self
+    }
+    /// Set [`Self::hdr_boost`].
+    pub fn with_hdr_boost(mut self, b: f32) -> Self {
+        self.hdr_boost = b;
+        self
+    }
+    /// Set [`Self::denoise`].
+    pub fn with_denoise(mut self, taps: u32) -> Self {
+        self.denoise = taps;
         self
     }
 }

@@ -27,6 +27,8 @@ const SCREENFX_WGSL: &str = include_str!("../shaders/post/screenfx.wgsl");
 
 /// Format of the AO targets.
 pub(crate) const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+/// Format of the SSR contribution targets (signed radiance).
+pub(crate) const REFL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Format of the SSR G-buffer-lite: octahedral world normal (rg), roughness (b), F0 (a, 0 = no
 /// reflection).
 pub(crate) const GBUFFER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -44,7 +46,7 @@ pub(crate) mod bits {
     pub const SSR: u32 = 4;
 }
 
-/// Matches `Fx` in screenfx.wgsl (192 bytes, one 256-byte slot per group).
+/// Matches `Fx` in screenfx.wgsl (208 bytes, one 256-byte slot per group).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
 pub(crate) struct GpuFx {
@@ -58,6 +60,7 @@ pub(crate) struct GpuFx {
     pub ao_size: [f32; 4],
     pub ssr_a: [f32; 4],
     pub ssr_b: [f32; 4],
+    pub ssr_c: [f32; 4],
     pub flags: [u32; 4],
     pub rect: [f32; 4],
 }
@@ -170,6 +173,12 @@ impl GpuFx {
                 finite(r.max_roughness, 0.55).clamp(0.01, 1.0),
                 finite(r.edge_fade, 0.1).clamp(0.0, 0.5),
                 (frame % 8) as f32 * 3.7,
+                r.denoise.min(4) as f32,
+            ];
+            p.ssr_c = [
+                finite(r.roughness_blur, 1.0).clamp(0.0, 4.0),
+                finite(r.stretch, 3.0).clamp(1.0, 16.0),
+                finite(r.hdr_boost, 1.0).clamp(0.0, 8.0),
                 0.0,
             ];
         }
@@ -184,6 +193,9 @@ enum Kind {
     Ao,
     BlurH,
     BlurV,
+    Ssr,
+    ReflBlurH,
+    ReflBlurV,
     Apply,
 }
 
@@ -193,6 +205,9 @@ impl Kind {
             Self::Ao => "fs_ao",
             Self::BlurH => "fs_blur_h",
             Self::BlurV => "fs_blur_v",
+            Self::Ssr => "fs_ssr",
+            Self::ReflBlurH => "fs_refl_blur_h",
+            Self::ReflBlurV => "fs_refl_blur_v",
             Self::Apply => "fs_apply",
         }
     }
@@ -311,6 +326,7 @@ impl ScreenFx {
                 tex(1),
                 tex(2),
                 tex(3),
+                tex(5),
                 wgpu::BindGroupLayoutEntry {
                     binding: 4,
                     visibility: wgpu::ShaderStages::FRAGMENT,
@@ -443,6 +459,7 @@ impl ScreenFx {
         scene: &wgpu::TextureView,
         ao: &wgpu::TextureView,
         gbuf: &wgpu::TextureView,
+        refl: &wgpu::TextureView,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("space3d screen fx inputs"),
@@ -471,6 +488,10 @@ impl ScreenFx {
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::Sampler(&self.sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(refl),
                 },
             ],
         })
@@ -532,7 +553,7 @@ impl ScreenFx {
                        src: &wgpu::TextureView,
                        dst: &wgpu::TextureView| {
                 this.pipeline(cx.device, kind, AO_FORMAT);
-                let bg = this.inputs(cx.device, input.scene, src, &this.black);
+                let bg = this.inputs(cx.device, input.scene, src, &this.black, &this.black);
                 this.draw(
                     cx,
                     (label, scope, camera),
@@ -568,6 +589,61 @@ impl ScreenFx {
             ao_view = Some(a_view);
         }
 
+        // SSR: the reflection's contribution into A (signed HDR), blurred H into B, V into A.
+        let mut refl_view: Option<wgpu::TextureView> = None;
+        if plan.ssr {
+            let desc = PoolDesc {
+                size: input.scene_size,
+                format: REFL_FORMAT,
+                mips: 1,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            };
+            let a = cx.pool.acquire(cx.device, desc);
+            let denoise = params.ssr_b[3] > 0.0;
+            let b = denoise.then(|| cx.pool.acquire(cx.device, desc));
+            let bytes = 8 * input.scene_size.0 as u64 * input.scene_size.1 as u64;
+            let (a_view, a_gen) = {
+                let t = cx.pool.get(a);
+                (t.view.clone(), t.generation)
+            };
+            self.count(cx.stats, a_gen, bytes);
+            let gbuf = self
+                .gbuffer(input.camera)
+                .cloned()
+                .unwrap_or_else(|| self.black.clone());
+            let clear = wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT);
+            let run = |this: &mut Self,
+                       cx: &mut FxEncode<'_>,
+                       kind: Kind,
+                       scope: &'static str,
+                       src: &wgpu::TextureView,
+                       dst: &wgpu::TextureView| {
+                this.pipeline(cx.device, kind, REFL_FORMAT);
+                let bg = this.inputs(cx.device, input.scene, src, &gbuf, &this.black);
+                this.draw(
+                    cx,
+                    ("space3d ssr", scope, camera),
+                    &this.pipelines[&(kind, REFL_FORMAT)],
+                    dst,
+                    (input.scene_size, input.rect, clear),
+                    (input.view_bind_group, input.depth_bind_group, &bg),
+                    (offsets, fx_offset),
+                );
+            };
+            let white = self.white.clone();
+            run(self, cx, Kind::Ssr, "post.ssr", &white, &a_view);
+            if let Some(b) = b {
+                let (b_view, b_gen) = {
+                    let t = cx.pool.get(b);
+                    (t.view.clone(), t.generation)
+                };
+                self.count(cx.stats, b_gen, bytes);
+                run(self, cx, Kind::ReflBlurH, "post.ssr_blur", &a_view, &b_view);
+                run(self, cx, Kind::ReflBlurV, "post.ssr_blur", &b_view, &a_view);
+            }
+            refl_view = Some(a_view);
+        }
+
         // Apply: S -> S'.
         let desc = PoolDesc {
             size: input.scene_size,
@@ -587,12 +663,13 @@ impl ScreenFx {
             texel * input.scene_size.0 as u64 * input.scene_size.1 as u64,
         );
         self.pipeline(cx.device, Kind::Apply, input.scene_format);
-        let gbuf = if plan.ssr {
-            self.gbuffer(input.camera).unwrap_or(&self.black)
-        } else {
-            &self.black
-        };
-        let bg = self.inputs(cx.device, input.scene, ao_view.as_ref().unwrap_or(&self.white), gbuf);
+        let bg = self.inputs(
+            cx.device,
+            input.scene,
+            ao_view.as_ref().unwrap_or(&self.white),
+            &self.black,
+            refl_view.as_ref().unwrap_or(&self.black),
+        );
         self.draw(
             cx,
             ("space3d screen fx apply", "post.screenfx", camera),
@@ -675,8 +752,8 @@ mod tests {
     }
 
     #[test]
-    fn gpu_fx_is_192_bytes_and_fits_a_slot() {
-        assert_eq!(std::mem::size_of::<GpuFx>(), 192);
+    fn gpu_fx_is_208_bytes_and_fits_a_slot() {
+        assert_eq!(std::mem::size_of::<GpuFx>(), 208);
         assert!(std::mem::size_of::<GpuFx>() as u64 <= SLOT);
     }
 

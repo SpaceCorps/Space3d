@@ -915,6 +915,14 @@ per-camera `Rgba8Unorm` target (octahedral world normal, roughness, F0 as the ma
 materials take part with their material parameters (their fragment hook is not run). Costs
 4 bytes per scene pixel while enabled, and the opaque draw calls again.
 
+Round 2 additions: `Ssr::{roughness_blur, stretch, hdr_boost, denoise}` (hit radiance averaged over
+an ellipse stretched vertically for glare streaks on wet ground, a depth-aware reflection blur, no
+history), hits on back-facing surfaces rejected, `Skybox::with_ground` (sky below the horizon
+replaced by a color so a ground plane meets the sky), `MeshData::{cuboid_tiled, plane_tiled}` and
+`Material::with_tiling` (real-world texture tiling through the existing KHR_texture_transform), see
+`city-effects-api.md`. SSR GPU scopes: `gbuffer`, `post.ssr`, `post.ssr_blur`; SSAO `post.ssao`,
+`post.ssao_blur`; `post.screenfx` is the apply pass.
+
 Limitations (v1): blended (glass-as-alpha) materials are not in the G-buffer, so use an opaque
 smooth, dark, metallic material for glass; reflections only show what is on screen (the rest
 falls back to the cubemap); the reflection tint is the F0 maximum (metals reflect untinted);
