@@ -91,6 +91,9 @@ pub(crate) mod work {
     pub const READING: u8 = 32;
     /// Distortion slots (only in a post group's settings camera with distortion enabled).
     pub const DISTORTION: u8 = 64;
+    /// The city effects of the view's post group need its single-sample scene depth (set by
+    /// the frame, not by nodes).
+    pub const SCREEN_FX: u8 = 128;
     /// Node work between the built-in opaque and blended batches.
     pub const BETWEEN: u8 = OPAQUE_POST | SKYBOX | TRANSPARENT_PRE;
 }
@@ -458,6 +461,8 @@ impl super::FrameState {
                 }
             }
             let work = nodes.work(&f.node_masks[v * n..(v + 1) * n]);
+            let fx = f.post_groups.iter().any(|p| p.view == Some(v) && p.fx.any());
+            let work = if fx { work | work::SCREEN_FX } else { work };
             f.views[v].work = work;
             if let Some(p) = distortion_group
                 && work & work::DISTORTION != 0
@@ -467,7 +472,7 @@ impl super::FrameState {
             // Resolved depth: for a SceneRead pass after a multisampled one, and for the
             // Distortion writers and HdrScene overlays reading this view's depth.
             let wants_1x = (mode == ReadMode::Resolved && work & work::READING != 0)
-                || work & work::DISTORTION != 0
+                || work & (work::DISTORTION | work::SCREEN_FX) != 0
                 || (overlay_depth && f.hdr_scene_view == Some(v));
             if samples > 1 && resolve && wants_1x {
                 let target = group_target(&f.views[v].target);

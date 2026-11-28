@@ -110,6 +110,9 @@ pub struct RenderStats {
     pub post_groups: u32,
     /// Passes recorded by post (metering, bloom, composite, FXAA).
     pub post_passes: u32,
+    /// Passes of the city effects (SSAO, its blurs, the apply pass; SSR's G-buffer pass is
+    /// counted in `render_passes` only).
+    pub screen_fx_passes: u32,
     /// SceneRead passes (depth-reading node slots).
     pub scene_read_passes: u32,
     /// MSAA depth resolves.

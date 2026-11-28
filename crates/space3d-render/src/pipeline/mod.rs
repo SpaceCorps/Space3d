@@ -87,6 +87,9 @@ pub(crate) enum PassKind {
     Depth,
     /// Depth-only pass with alpha-masked discards.
     DepthMask,
+    /// The SSR G-buffer-lite pass (`fs_gbuffer`): normal, roughness and F0 of opaque surfaces
+    /// into an `Rgba8Unorm` target, depth-tested (no depth writes) over the scene depth.
+    GBuffer,
 }
 
 /// `PipelineKey::kinds` bit: the color maps (base color, emissive) are multi-layer arrays
