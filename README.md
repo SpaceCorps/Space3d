@@ -155,6 +155,7 @@ GraphicsQuality::recommended_for(renderer).apply(ctx.world, ctx.resources);  // 
 | bloom | position-stable, energy-proportional, resolution-independent; emissive, particles and HDR skies glow |
 | post chain | color grading (white balance, lift/gamma/gain, 3D LUTs, WGSL hooks), FXAA, vignette, chromatic aberration, film grain |
 | distortion | heat haze and shockwaves from particles, `DistortionMaterial` meshes and render nodes |
+| city effects | opt-in on a `PostProcess` camera: height/distance fog with sun in-scatter, SSAO (GTAO, half-res, depth-aware blur), screen-space reflections with an IBL fallback; off on Low and in the Ldr fallback (`docs/graphics/post.md`) |
 | materials | normal, ORM, metallic-roughness, occlusion and emissive maps; opaque, alpha-mask, alpha, premultiplied and additive blending; GGX shading |
 | glTF | every material slot straight from the file, sRGB/linear by slot, `texCoord` sets, texture transforms, MikkTSpace tangents |
 | sky and IBL | cubemaps from faces, three.js faces or panoramas (LDR/HDR); `Skybox`; diffuse + GGX-prefiltered specular baked on the GPU |
