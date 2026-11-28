@@ -24,6 +24,7 @@ impl MeshBuilder {
         Self::default()
     }
 
+    #[allow(dead_code)]
     pub fn is_empty(&self) -> bool {
         self.m.indices.is_empty()
     }
@@ -124,6 +125,7 @@ impl MeshBuilder {
     }
 
     /// A cylinder from `base` along `axis` (unit) of `length`, smooth sides and flat caps.
+    #[allow(clippy::too_many_arguments)]
     pub fn cylinder(&mut self, base: Vec3, axis: Vec3, radius: f32, length: f32, segments: u32, cell: u32, c: Vec4) {
         let helper = if axis.y.abs() > 0.9 { Vec3::X } else { Vec3::Y };
         let u = axis.cross(helper).normalize();

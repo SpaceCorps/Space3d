@@ -11,10 +11,6 @@ use space3d::prelude::*;
 
 /// Street pitch (block + pavements + road), meters.
 pub const PITCH: f32 = 75.0;
-/// Curb-to-curb road width.
-pub const ROAD: f32 = 15.0;
-/// Pavement width.
-pub const SIDEWALK: f32 = 5.0;
 /// Half the distance from a block's center to its curb.
 pub const CURB: f32 = 30.0;
 /// Blocks per side.
@@ -114,6 +110,7 @@ pub struct CityData {
     /// Vehicle meshes: nine sedans (the last a taxi) and a bus.
     pub vehicles: Vec<MeshData>,
     /// Intersections' centers (for traffic).
+    #[allow(dead_code)]
     pub extent: f32,
 }
 

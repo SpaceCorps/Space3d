@@ -32,9 +32,9 @@ use procgen::{Facade, TextureSet};
 use space3d::particles::prelude::*;
 use space3d::prelude::*;
 use space3d::render::{
-    Bloom, ColorGrading, CubemapHandle, CubemapSource, DirectionalShadow, EnvironmentLight, FilmGrain, FrameSettings,
-    FxaaQuality, GpuTimings, GraphicsQuality, IblSettings, LightingSettings, RenderStats, Renderer, ShadingModel,
-    ShadowFit, Vignette,
+    Bloom, ColorGrading, CubemapHandle, CubemapSource, DirectionalShadow, EnvironmentLight, FilmGrain, Fog,
+    FrameSettings, FxaaQuality, GpuTimings, GraphicsQuality, IblSettings, LightingSettings, RenderStats, Renderer,
+    ShadingModel, ShadowFit, Ssao, Ssr, Vignette,
 };
 use space3d::tasks::Task;
 
@@ -283,6 +283,24 @@ fn setup(ctx: &mut SystemCtx) {
         })
         .with_chromatic_aberration(0.07)
         .with_fxaa(FxaaQuality::High);
+    // Height fog, SSAO and screen-space reflections (opt-in post effects; the tiers drop them
+    // where the device cannot run them).
+    let post = if knob("CITY_EFFECTS", 1.0) > 0.5 {
+        post.with_fog(Fog {
+            enabled: true,
+            color: Vec3::new(0.50, 0.33, 0.36),
+            density: knob("CITY_FOG", 0.0013),
+            height_falloff: 0.02,
+            sun_color: Vec3::new(1.0, 0.55, 0.28),
+            sun_intensity: 0.9,
+            sun_exponent: 6.0,
+            ..Fog::default()
+        })
+        .with_ssao(Ssao::on().with_radius(1.5).with_intensity(1.0))
+        .with_ssr(Ssr::on().with_distance(120.0).with_max_roughness(0.5))
+    } else {
+        post
+    };
     let (pos, target) = flight::sample(ctx.resources.expect::<Demo>().time);
     let camera = ctx.world.spawn((
         Name("camera".into()),
@@ -688,7 +706,7 @@ fn street_lights(ctx: &mut SystemCtx) {
     }
     for slot in &mut d.slots {
         let spot = slot.id.and_then(|id| cands.iter().find(|c| c.0 == id));
-        let Ok((mut t, mut l)) = ctx
+        let Ok((t, l)) = ctx
             .world
             .query_one_mut::<(&mut Transform, &mut PointLight)>(slot.entity)
         else {

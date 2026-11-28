@@ -235,8 +235,6 @@ pub enum Facade {
     Stone,
 }
 
-pub const FACADES: [Facade; 4] = [Facade::Concrete, Facade::Brick, Facade::Glass, Facade::Stone];
-
 fn inside(x: u32, y: u32, x0: u32, y0: u32, x1: u32, y1: u32) -> bool {
     x >= x0 && x < x1 && y >= y0 && y < y1
 }
@@ -418,13 +416,13 @@ fn brick_texel(x: u32, y: u32, cx: u32, cy: u32, lx: u32, ly: u32, seed: u32) ->
 fn glass_texel(x: u32, y: u32, cx: u32, cy: u32, lx: u32, ly: u32, seed: u32) -> Texel {
     // One bay = two panes over a spandrel.
     let n = fbm_t(x as f32 / 30.0, y as f32 / 30.0, 12, 3, seed);
-    if lx < 2 || lx >= CELL - 1 || lx.abs_diff(32) < 2 {
+    if !(2..CELL - 1).contains(&lx) || lx.abs_diff(32) < 2 {
         let mut m = Texel::new(Vec3::splat(0.05), 0.35);
         m.metal = 0.8;
         m.height = 2.0;
         return m;
     }
-    if ly >= 46 || ly < 2 {
+    if !(2..46).contains(&ly) {
         // spandrel: opaque dark panel
         let mut s = Texel::new(Vec3::new(0.035, 0.045, 0.05) * (0.8 + 0.4 * n), 0.25);
         s.metal = 0.6;
@@ -467,11 +465,11 @@ fn stone_texel(x: u32, y: u32, cx: u32, cy: u32, lx: u32, ly: u32, seed: u32) ->
     let mut t = Texel::new(Vec3::new(0.50, 0.40, 0.29) * tone * 0.9, 0.7);
     t.height = 0.4 * speck + 0.6 * n;
     // ashlar courses
-    if ly % 16 == 0 {
+    if ly.is_multiple_of(16) {
         t.height -= 1.6;
         t.base *= 0.78;
     }
-    if (lx + (ly / 16) * 21) % 42 == 0 {
+    if (lx + (ly / 16) * 21).is_multiple_of(42) {
         t.height -= 1.4;
         t.base *= 0.8;
     }
@@ -625,7 +623,10 @@ pub fn asphalt_textures(seed: u32) -> TextureSet {
         let large = fbm_t(u / 256.0 * 4.0, v / 256.0 * 4.0, 4, 5, seed + 2);
         let patch = fbm_t(u / 128.0, v / 128.0, 8, 4, seed + 3);
         let tone = 0.034 + 0.015 * coarse + 0.01 * grain + 0.014 * patch;
-        let mut t = Texel::new(Vec3::new(tone, tone * 0.99, tone * 1.03), 0.2 + 0.22 * coarse + 0.1 * grain);
+        let mut t = Texel::new(
+            Vec3::new(tone, tone * 0.99, tone * 1.03),
+            0.2 + 0.22 * coarse + 0.1 * grain,
+        );
         t.height = 1.1 * grain + 1.4 * coarse;
         // cracks: thin dark ridges of a low frequency noise
         let c = fbm_t(u / 70.0, v / 70.0, 15, 4, seed + 4);

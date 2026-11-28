@@ -16,8 +16,8 @@ ParticleEffect(
         gravity: (0.0, 0.35, 0.0),
         forces: [Turbulence(strength: 0.6, frequency: 0.5, speed: 0.3)],
         lifetime: (4.0, 6.5),
-        size: (1.1, 1.8),
-        size_over_life: Linear(0.5, 3.8),
+        size: (0.7, 1.2),
+        size_over_life: Linear(0.5, 2.6),
         rotation: (0.0, 6.28),
         angular_velocity: (-0.25, 0.25),
         color_over_life: (keys: [
@@ -25,7 +25,7 @@ ParticleEffect(
             (0.5, (1.05, 0.78, 0.62, 1.0)),
             (1.0, (0.6, 0.5, 0.5, 1.0)),
         ]),
-        alpha_over_life: Keys([(0.0, 0.0), (0.08, 0.34), (0.5, 0.22), (1.0, 0.0)]),
+        alpha_over_life: Keys([(0.0, 0.0), (0.08, 0.16), (0.5, 0.1), (1.0, 0.0)]),
         render: (shape: Smoke(breakup: 0.65, hot_core: 0.0), blend: Alpha),
     )],
 )

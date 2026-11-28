@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <title>Space3d — city demo</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #020306; color: #ccd; font: 14px system-ui, sans-serif; overflow: hidden; }
+    /* `!important`: the runner sets the canvas' CSS size from the window size; the page decides. */
+    canvas#space3d { display: block; width: 100vw !important; height: 100vh !important; touch-action: none; outline: none; }
+    #status { position: fixed; left: 12px; bottom: 10px; opacity: .7; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <canvas id="space3d" tabindex="0"></canvas>
+  <div id="status">loading…</div>
+  <script type="module">
+    // `space3d build --target web` runs wasm-bindgen with --out-name city_demo.
+    import init from "./city_demo.js";
+    const status = document.getElementById("status");
+    // `?webgl2`: hide WebGPU so wgpu falls back to WebGL2 (the Low tier's path) in a browser
+    // that has both.
+    if (new URLSearchParams(location.search).has("webgl2")) {
+      Object.defineProperty(navigator, "gpu", { value: undefined, configurable: true });
+    }
+    init()
+      .then(() => { status.textContent = "Q quality · F free-fly · P pause · H panel"; })
+      .catch((e) => { status.textContent = "failed to start: " + e; console.error(e); });
+  </script>
+</body>
+</html>
