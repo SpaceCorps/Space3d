@@ -784,7 +784,7 @@ fn roof_details(ch: &mut ChunkBuild, steam: &mut Vec<Vec3>, rng: &mut Rng, r: [f
                 Vec4::ONE,
             );
         }
-        if rng.chance(0.12) {
+        if rng.chance(0.0) {
             steam.push(Vec3::new(px + sx * 0.5, y + sy + 0.2, pz + sz * 0.5));
         }
     }

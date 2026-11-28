@@ -243,7 +243,7 @@ fn setup(ctx: &mut SystemCtx) {
         Transform::IDENTITY.looking_at(-sun_dir, Vec3::Y),
         DirectionalLight {
             color: Vec3::new(1.0, 0.56, 0.26),
-            intensity: knob("CITY_SUN", 5.2),
+            intensity: knob("CITY_SUN", 4.2),
         },
         DirectionalShadow::new().with_fit(ShadowFit::Camera {
             camera: None,
@@ -438,7 +438,7 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
     );
     let assets = ctx.resources.expect_mut::<RenderAssets>();
     let sky = assets.add_cubemap(sky);
-    let emissive = knob("CITY_WINDOWS", 3.4);
+    let emissive = knob("CITY_WINDOWS", 1.8);
     let mut facade_mats: [Option<Material>; 4] = [None, None, None, None];
     for (kind, set) in a.facades.into_iter().chain(b.facades) {
         let maps = upload(assets, set);
@@ -450,7 +450,7 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
         };
         facade_mats[slot] = Some(lit_material(&maps, emissive));
     }
-    let shop_mat = lit_material(&upload(assets, rest.shop), knob("CITY_SHOPS", 3.0));
+    let shop_mat = lit_material(&upload(assets, rest.shop), knob("CITY_SHOPS", 1.4));
     let road_mat = lit_material(&upload(assets, rest.asphalt), 0.0);
     let paving_mat = lit_material(&upload(assets, rest.paving), 0.0);
     let roof_mat = lit_material(&upload(assets, rest.roof), 0.0);

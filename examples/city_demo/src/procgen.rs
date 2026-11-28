@@ -551,7 +551,7 @@ pub fn shop_textures(seed: u32) -> TextureSet {
             t.height = if stripe { 0.8 } else { 0.0 };
             return t;
         }
-        let shutter = kind < 0.14;
+        let shutter = kind < 0.08;
         // piers left and right
         if lx < 5 || lx >= CELL - 5 {
             t.base = Vec3::new(0.2, 0.18, 0.16) * (0.8 + 0.4 * n);
@@ -624,8 +624,8 @@ pub fn asphalt_textures(seed: u32) -> TextureSet {
         let coarse = fbm_t(u / 5.0, v / 5.0, 205, 2, seed + 1);
         let large = fbm_t(u / 256.0 * 4.0, v / 256.0 * 4.0, 4, 5, seed + 2);
         let patch = fbm_t(u / 128.0, v / 128.0, 8, 4, seed + 3);
-        let tone = 0.045 + 0.02 * coarse + 0.012 * grain + 0.02 * patch;
-        let mut t = Texel::new(Vec3::new(tone, tone * 0.99, tone * 1.03), 0.4 + 0.2 * grain);
+        let tone = 0.034 + 0.015 * coarse + 0.01 * grain + 0.014 * patch;
+        let mut t = Texel::new(Vec3::new(tone, tone * 0.99, tone * 1.03), 0.2 + 0.22 * coarse + 0.1 * grain);
         t.height = 1.1 * grain + 1.4 * coarse;
         // cracks: thin dark ridges of a low frequency noise
         let c = fbm_t(u / 70.0, v / 70.0, 15, 4, seed + 4);
@@ -638,7 +638,7 @@ pub fn asphalt_textures(seed: u32) -> TextureSet {
         // patch repairs: a smoother, darker rectangle-ish tone
         // puddles
         let p = fbm_t(u / 256.0 * 3.0, v / 256.0 * 3.0, 3, 5, seed + 9);
-        let mask = smooth(0.52, 0.56, p * 0.8 + large * 0.2 + 0.03 * coarse);
+        let mask = smooth(0.585, 0.605, p * 0.8 + large * 0.2 + 0.03 * coarse);
         if mask > 0.0 {
             t.rough = mix(t.rough, 0.025, mask);
             t.base *= mix(1.0, 0.55, mask);
@@ -646,7 +646,7 @@ pub fn asphalt_textures(seed: u32) -> TextureSet {
             t.metal = 0.0;
         }
         // overall: still-damp asphalt is a little glossier than dry
-        t.rough = (t.rough * 0.8).clamp(0.02, 1.0);
+        t.rough = t.rough.clamp(0.02, 1.0);
         t
     });
     layers.finish(0.9)
@@ -832,18 +832,18 @@ pub fn sky(d: Vec3) -> Vec3 {
     let ang = cos_s.acos();
     // Gradient: warm band at the horizon, teal-to-indigo toward the zenith.
     let h = up.clamp(0.0, 1.0);
-    let zenith = Vec3::new(0.035, 0.085, 0.24);
-    let mid = Vec3::new(0.16, 0.26, 0.48);
-    let horizon_far = Vec3::new(0.62, 0.38, 0.42);
-    let horizon_sun = Vec3::new(1.55, 0.62, 0.2);
+    let zenith = Vec3::new(0.018, 0.045, 0.15);
+    let mid = Vec3::new(0.09, 0.17, 0.36);
+    let horizon_far = Vec3::new(0.30, 0.20, 0.30);
+    let horizon_sun = Vec3::new(1.5, 0.55, 0.16);
     let toward = smooth(-0.2, 1.0, cos_s);
     let horizon = horizon_far.lerp(horizon_sun, toward);
     let t1 = h.powf(0.45);
     let t2 = h.powf(0.8);
     let mut col = horizon.lerp(mid, t1).lerp(zenith, t2 * 0.8 + t1 * 0.0);
     // Sun glow: a wide scatter lobe, a tighter bright one and the disc.
-    col += Vec3::new(1.0, 0.45, 0.14) * 0.9 * (-ang * 2.3).exp();
-    col += Vec3::new(1.0, 0.66, 0.34) * 2.4 * (-ang * 9.0).exp();
+    col += Vec3::new(1.0, 0.42, 0.12) * 0.45 * (-ang * 4.0).exp();
+    col += Vec3::new(1.0, 0.62, 0.3) * 2.2 * (-ang * 11.0).exp();
     col += Vec3::new(1.0, 0.85, 0.6) * 220.0 * smooth(0.0105, 0.0065, ang.min(0.0105)) * (ang < 0.0105) as u32 as f32;
     // Clouds: a layer of stratocumulus, lit from below by the low sun.
     if up > 0.01 {

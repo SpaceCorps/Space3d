@@ -38,7 +38,7 @@ ParticleEffect(
     looping: true,
     layers: [(
         name: "drops",
-        spawn: (rate: 2600.0),
+        spawn: (rate: 4200.0),
         shape: Box(half_extents: (22.0, 0.5, 22.0)),
         offset: (0.0, 15.0, 0.0),
         direction: Fixed((0.05, -1.0, 0.02)),
@@ -49,7 +49,7 @@ ParticleEffect(
         alpha_over_life: Keys([(0.0, 0.0), (0.1, 0.22), (0.9, 0.22), (1.0, 0.0)]),
         render: (
             shape: Streak(core: 0.4, taper: 0.5),
-            facing: VelocityStretched(scale: 0.035, min: 1.0, max: 80.0),
+            facing: VelocityStretched(scale: 0.02, min: 1.0, max: 80.0),
         ),
     )],
 )
