@@ -220,7 +220,7 @@ fn ground_mesh() -> MeshData {
             b.m.positions.push([x, -0.02, z]);
             b.m.normals.push(up.to_array());
             b.m.uvs.push(uv(x, z));
-            b.m.colors.push([0.7, 0.7, 0.7, 1.0]);
+            b.m.colors.push([0.22, 0.22, 0.22, 1.0]);
         }
         b.m.indices
             .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
@@ -611,11 +611,35 @@ fn building(
             let bl = Vec3::new(corner.x, wall_y0, corner.z);
             let up = Vec3::Y * (y1 - wall_y0);
             let br = bl + right * len;
-            ch.facade[slot].quad(
-                [bl, br, br + up, bl + up],
-                n,
-                [[u0, v(wall_y0)], [u1, v(wall_y0)], [u1, v(y1)], [u0, v(y1)]],
-                tint,
+            let uvs = |ya: f32, yb: f32| [[u0, v(ya)], [u1, v(ya)], [u1, v(yb)], [u0, v(yb)]];
+            if part.fs == 0 {
+                // baked ambient occlusion: the wall darkens toward the street
+                let ym = wall_y0 + (y1 - wall_y0).min(9.0);
+                let upm = Vec3::Y * (ym - wall_y0);
+                let dark = tint * Vec4::new(0.5, 0.5, 0.5, 1.0);
+                ch.facade[slot].quad_colors(
+                    [bl, br, br + upm, bl + upm],
+                    n,
+                    uvs(wall_y0, ym),
+                    [dark, dark, tint, tint],
+                );
+                if y1 > ym + 0.01 {
+                    let (bl2, br2) = (bl + upm, br + upm);
+                    let up2 = Vec3::Y * (y1 - ym);
+                    ch.facade[slot].quad([bl2, br2, br2 + up2, bl2 + up2], n, uvs(ym, y1), tint);
+                }
+            } else {
+                ch.facade[slot].quad([bl, br, br + up, bl + up], n, uvs(wall_y0, y1), tint);
+            }
+            wall_details(
+                ch,
+                rng,
+                kind,
+                [bl, right, n],
+                len,
+                wall_y0,
+                y1,
+                part.fs == 0 && perimeter[si],
             );
             if part.fs == 0 {
                 let bl = Vec3::new(corner.x, 0.0, corner.z);
@@ -659,6 +683,7 @@ fn building(
         let uv = |p: Vec3| [p.x / ROOF_TILE_M, p.z / ROOF_TILE_M];
         ch.roof
             .quad(q, Vec3::Y, [uv(q[0]), uv(q[1]), uv(q[2]), uv(q[3])], Vec4::ONE);
+        cornice(ch, [px0, pz0, px1, pz1], y1, kind);
         if pi == n_parts - 1 {
             roof_details(ch, steam, rng, [px0, pz0, px1, pz1], ty, floors);
         }
@@ -781,7 +806,7 @@ fn roof_details(ch: &mut ChunkBuild, steam: &mut Vec<Vec3>, rng: &mut Rng, r: [f
                 Vec4::ONE,
             );
         }
-        if rng.chance(0.0) {
+        if rng.chance(0.1) {
             steam.push(Vec3::new(px + sx * 0.5, y + sy + 0.2, pz + sz * 0.5));
         }
     }
@@ -838,6 +863,188 @@ fn roof_details(ch: &mut ChunkBuild, steam: &mut Vec<Vec3>, rng: &mut Rng, r: [f
             );
         }
     }
+}
+
+/// Box on a wall: `along` meters from the wall's left end, `w` wide, projecting `depth`.
+#[allow(clippy::too_many_arguments)]
+fn wall_box(
+    b: &mut MeshBuilder,
+    frame: [Vec3; 3],
+    along: f32,
+    w: f32,
+    depth: f32,
+    y0: f32,
+    y1: f32,
+    cell: u32,
+    c: Vec4,
+) {
+    let [bl, right, n] = frame;
+    let a = bl + right * along;
+    let e = bl + right * (along + w) + n * depth;
+    let min = Vec3::new(a.x.min(e.x), y0, a.z.min(e.z));
+    let max = Vec3::new(a.x.max(e.x), y1, a.z.max(e.z));
+    b.box_cell(min, max, cell, c);
+}
+
+/// Pilasters, string courses, balconies and wall-mounted air conditioners on one wall.
+#[allow(clippy::too_many_arguments)]
+fn wall_details(
+    ch: &mut ChunkBuild,
+    rng: &mut Rng,
+    kind: Facade,
+    frame: [Vec3; 3],
+    len: f32,
+    y0: f32,
+    y1: f32,
+    street: bool,
+) {
+    let c = Vec4::new(0.85, 0.83, 0.8, 1.0);
+    let floors = ((y1 - y0) / FLOOR_M) as u32;
+    if matches!(kind, Facade::Brick | Facade::Stone) {
+        for along in [0.0, len - 0.5] {
+            wall_box(
+                &mut ch.props_cold,
+                frame,
+                along,
+                0.5,
+                0.22,
+                y0 - 0.2,
+                y1,
+                cell::CONCRETE,
+                c,
+            );
+        }
+    }
+    if matches!(kind, Facade::Stone | Facade::Concrete) && floors > 4 {
+        let mut f = 4;
+        while f < floors {
+            let y = y0 + f as f32 * FLOOR_M;
+            wall_box(
+                &mut ch.props_cold,
+                frame,
+                0.0,
+                len,
+                0.3,
+                y - 0.15,
+                y + 0.15,
+                cell::CONCRETE,
+                c,
+            );
+            f += 5;
+        }
+    }
+    if street && floors <= 14 && !matches!(kind, Facade::Glass) && rng.chance(0.4) {
+        let w = (len * 0.55).max(3.0);
+        let along = (len - w) * 0.5;
+        let mut f = 1;
+        while f < floors.min(10) {
+            let y = y0 + f as f32 * FLOOR_M;
+            wall_box(&mut ch.props_cold, frame, along, w, 1.3, y - 0.2, y, cell::CONCRETE, c);
+            wall_box(
+                &mut ch.props_cold,
+                frame,
+                along,
+                w,
+                1.3,
+                y,
+                y + 0.45,
+                cell::STEEL,
+                Vec4::ONE,
+            );
+            f += 2;
+        }
+    }
+    if !matches!(kind, Facade::Glass) && rng.chance(0.6) {
+        for _ in 0..(1 + rng.int(4)) {
+            let along = rng.range(1.0, (len - 2.0).max(1.1));
+            let y = y0 + (1 + rng.int(floors.max(2) - 1)) as f32 * FLOOR_M - 1.1;
+            wall_box(
+                &mut ch.props_cold,
+                frame,
+                along,
+                0.9,
+                0.5,
+                y,
+                y + 0.6,
+                cell::CONCRETE,
+                Vec4::new(0.9, 0.9, 0.95, 1.0),
+            );
+        }
+    }
+}
+
+/// A projecting cornice ring around a roof edge.
+fn cornice(ch: &mut ChunkBuild, r: [f32; 4], y: f32, kind: Facade) {
+    let [x0, z0, x1, z1] = r;
+    let o = if kind == Facade::Glass { 0.15 } else { 0.5 };
+    let c = Vec4::new(0.8, 0.78, 0.76, 1.0);
+    let (lo, hi) = (y - 0.55, y + 0.05);
+    let b = &mut ch.props_cold;
+    b.box_cell(
+        Vec3::new(x0 - o, lo, z0 - o),
+        Vec3::new(x1 + o, hi, z0),
+        cell::CONCRETE,
+        c,
+    );
+    b.box_cell(
+        Vec3::new(x0 - o, lo, z1),
+        Vec3::new(x1 + o, hi, z1 + o),
+        cell::CONCRETE,
+        c,
+    );
+    b.box_cell(Vec3::new(x0 - o, lo, z0), Vec3::new(x0, hi, z1), cell::CONCRETE, c);
+    b.box_cell(Vec3::new(x1, lo, z0), Vec3::new(x1 + o, hi, z1), cell::CONCRETE, c);
+}
+
+/// A street tree: trunk and three lumpy crowns.
+fn tree(b: &mut MeshBuilder, p: Vec3, rng: &mut Rng) {
+    let h = rng.range(5.0, 7.5);
+    b.cylinder(
+        p,
+        Vec3::Y,
+        0.16,
+        h * 0.6,
+        6,
+        cell::RUBBER,
+        Vec4::new(1.6, 1.3, 1.0, 1.0),
+    );
+    let k = rng.range(0.8, 1.5);
+    let g = Vec4::new(0.05 * k, 0.13 * k, 0.035 * k, 1.0);
+    for i in 0..3 {
+        let a = i as f32 * 2.1 + rng.f() * 2.0;
+        let off = Vec3::new(a.cos() * 0.9, h * 0.62 + rng.f() * 1.2, a.sin() * 0.9);
+        let r = rng.range(0.9, 1.25);
+        b.blob(p + off, Vec3::new(1.9, 1.5, 1.9) * r, rng.int(1000), cell::CONCRETE, g);
+    }
+}
+
+/// A pedestrian: a dark coat and a head.
+fn person(b: &mut MeshBuilder, p: Vec3, rng: &mut Rng) {
+    let coats = [
+        Vec4::new(0.03, 0.03, 0.035, 1.0),
+        Vec4::new(0.12, 0.05, 0.04, 1.0),
+        Vec4::new(0.04, 0.06, 0.12, 1.0),
+        Vec4::new(0.25, 0.2, 0.15, 1.0),
+        Vec4::new(0.35, 0.05, 0.05, 1.0),
+    ];
+    let c = coats[rng.int(coats.len() as u32) as usize];
+    let h = rng.range(1.55, 1.85);
+    b.cylinder(
+        p,
+        Vec3::Y,
+        0.22,
+        h - 0.25,
+        6,
+        cell::RUBBER,
+        c * Vec4::new(8.0, 8.0, 8.0, 1.0),
+    );
+    b.blob(
+        p + Vec3::Y * (h - 0.12),
+        Vec3::splat(0.12),
+        rng.int(100),
+        cell::CONCRETE,
+        Vec4::new(0.5, 0.35, 0.28, 1.0),
+    );
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -911,6 +1118,27 @@ fn street_furniture(ch: &mut ChunkBuild, lights: &mut Vec<LightSpot>, rng: &mut 
             pool(&mut ch.glow, road_c, 8.5, Vec4::new(1.0, 0.58, 0.26, 1.0) * 0.5);
             let pave_c = Vec3::new(p.x, KERB_H + 0.02, p.z);
             pool(&mut ch.glow, pave_c, 4.8, Vec4::new(1.0, 0.62, 0.3, 1.0) * 0.55);
+            // the lamp's long reflection on the wet road, stretched along the street
+            let streak_c = Vec3::new(head.x, 0.045, head.z) + dir * 3.0;
+            glow_rect(
+                &mut ch.glow,
+                streak_c,
+                along * 11.0,
+                dir * 1.1,
+                Vec4::new(1.0, 0.6, 0.28, 1.0) * 0.55,
+            );
+        }
+        // street trees and pedestrians on the pavement
+        for off in [-21.0f32, -4.0, 3.0, 20.0] {
+            if rng.chance(0.75) {
+                let p = Vec3::new(c.x, KERB_H, c.y) + dir * (CURB - 1.6) + along * off;
+                tree(&mut ch.props_cold, p, rng);
+            }
+        }
+        for _ in 0..rng.int(5) {
+            let p =
+                Vec3::new(c.x, KERB_H, c.y) + dir * rng.range(CURB - 4.8, CURB - 2.2) + along * rng.range(-22.0, 22.0);
+            person(&mut ch.props_cold, p, rng);
         }
         // parked cars along this curb
         let n = rng.int(5);

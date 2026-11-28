@@ -40,9 +40,14 @@ impl MeshBuilder {
 
     /// A quad, counter-clockwise seen from the side `n` points to.
     pub fn quad(&mut self, p: [Vec3; 4], n: Vec3, uv: [[f32; 2]; 4], c: Vec4) {
+        self.quad_colors(p, n, uv, [c; 4]);
+    }
+
+    /// A quad with a color per vertex (baked darkening).
+    pub fn quad_colors(&mut self, p: [Vec3; 4], n: Vec3, uv: [[f32; 2]; 4], c: [Vec4; 4]) {
         let base = self.m.positions.len() as u32;
         for i in 0..4 {
-            self.vertex(p[i], n, uv[i], c);
+            self.vertex(p[i], n, uv[i], c[i]);
         }
         self.m
             .indices
@@ -236,6 +241,32 @@ impl MeshBuilder {
                 ([p[3], p[2], p[1], p[0]], n)
             };
             self.quad_cell(p, nn, side, c);
+        }
+    }
+
+    /// A lumpy ellipsoid (foliage, heads): smooth normals, radii jittered per vertex.
+    pub fn blob(&mut self, center: Vec3, radii: Vec3, seed: u32, cell: u32, c: Vec4) {
+        let (sectors, stacks) = (8u32, 5u32);
+        let uv = cell_uv(cell);
+        let start = self.m.positions.len() as u32;
+        for i in 0..=stacks {
+            let phi = std::f32::consts::PI * i as f32 / stacks as f32;
+            for j in 0..=sectors {
+                let theta = std::f32::consts::TAU * (j % sectors) as f32 / sectors as f32;
+                let d = Vec3::new(phi.sin() * theta.cos(), phi.cos(), phi.sin() * theta.sin());
+                let ring = if i == 0 || i == stacks { 0 } else { j % sectors };
+                let jit = 0.82 + 0.3 * crate::procgen::unit(crate::procgen::hash(i, ring, seed));
+                let shade = 0.75 + 0.5 * (d.y * 0.5 + 0.5);
+                self.vertex(center + d * radii * jit, d, uv, c * Vec4::new(shade, shade, shade, 1.0));
+            }
+        }
+        let row = sectors + 1;
+        for i in 0..stacks {
+            for j in 0..sectors {
+                let a = start + i * row + j;
+                let b = a + row;
+                self.m.indices.extend_from_slice(&[a, a + 1, b, a + 1, b + 1, b]);
+            }
         }
     }
 

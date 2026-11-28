@@ -188,7 +188,7 @@ fn add_game(app: &mut App, headless: bool) {
         slots: Vec::new(),
         hud: !headless,
         shots: shots_from_env(),
-        timings: false,
+        timings: knob("CITY_REPORT", 0.0) > 0.5,
     });
     app.add_system(Stage::Startup, setup);
     app.add_system(Stage::PreUpdate, choose_quality);
@@ -198,6 +198,7 @@ fn add_game(app: &mut App, headless: bool) {
     app.add_system(Stage::Update, traffic);
     app.add_system(Stage::PostUpdate, street_lights);
     app.add_system(Stage::Last, screenshots);
+    app.add_system(Stage::Last, report);
     app.add_ui_system(hud);
 }
 
@@ -288,12 +289,13 @@ fn setup(ctx: &mut SystemCtx) {
     let post = if knob("CITY_EFFECTS", 1.0) > 0.5 {
         post.with_fog(Fog {
             enabled: true,
-            color: Vec3::new(0.50, 0.33, 0.36),
-            density: knob("CITY_FOG", 0.0013),
-            height_falloff: 0.02,
-            sun_color: Vec3::new(1.0, 0.55, 0.28),
-            sun_intensity: 0.9,
-            sun_exponent: 6.0,
+            color: Vec3::new(0.40, 0.42, 0.56),
+            density: knob("CITY_FOG", 0.0007),
+            height_falloff: 0.012,
+            sky_amount: 0.4,
+            sun_color: Vec3::new(1.0, 0.6, 0.3),
+            sun_intensity: 1.3,
+            sun_exponent: 8.0,
             ..Fog::default()
         })
         .with_ssao(Ssao::on().with_radius(1.5).with_intensity(1.0))
@@ -563,7 +565,7 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
             GraphicsQuality::Medium => 40,
             _ => 70,
         };
-        for p in city.steam.iter().take(steam_count) {
+        for p in city.steam.iter().filter(|p| far_from_path(**p)).take(steam_count) {
             ctx.world.spawn((
                 Transform::from_xyz(p.x, p.y, p.z),
                 ParticleEmitter::new(handles[0]).with_prewarm(5.0),
@@ -628,7 +630,7 @@ fn traffic(ctx: &mut SystemCtx) {
 /// Hand the lamps, signals, signs and car headlights nearest the camera to the real lights,
 /// fading them in and out so none pops.
 fn street_lights(ctx: &mut SystemCtx) {
-    let dt = ctx.time().delta_secs() as f32;
+    let dt = ctx.time().delta_secs();
     let d = ctx.resources.expect_mut::<Demo>();
     let Some(cam) = d.camera else {
         return;
@@ -729,6 +731,47 @@ fn street_lights(ctx: &mut SystemCtx) {
     }
 }
 
+/// Steam is kept off the flythrough: no source within 18 m of the camera path.
+fn far_from_path(p: Vec3) -> bool {
+    let mut t = 0.0;
+    while t < flight::duration() {
+        if flight::sample(t).0.distance(p) < 18.0 {
+            return false;
+        }
+        t += 0.5;
+    }
+    true
+}
+
+/// `CITY_REPORT=1`: frame rate and GPU time once a second on stdout.
+fn report(ctx: &mut SystemCtx) {
+    if knob("CITY_REPORT", 0.0) < 0.5 {
+        return;
+    }
+    let now = ctx.time().elapsed_secs();
+    let (frames, since) = {
+        static STATE: std::sync::Mutex<(u64, f64)> = std::sync::Mutex::new((0, 0.0));
+        let mut s = STATE.lock().unwrap();
+        s.0 += 1;
+        if now - s.1 < 2.0 {
+            return;
+        }
+        let r = (s.0, now - s.1);
+        *s = (0, now);
+        r
+    };
+    let gpu = ctx.resources.get::<GpuTimings>().map(|t| t.total_ms).unwrap_or(0.0);
+    let d = ctx.resources.expect::<Demo>();
+    println!(
+        "fps {:.1} ({:.2} ms/frame), GPU scopes {:.2} ms, t={:.0}s, quality {}",
+        frames as f64 / since,
+        since * 1000.0 / frames as f64,
+        gpu,
+        d.time,
+        d.quality.map_or("?".into(), |q| q.to_string())
+    );
+}
+
 fn controls(ctx: &mut SystemCtx) {
     let Some(input) = ctx.resources.get::<Input>() else {
         return;
@@ -772,7 +815,7 @@ fn controls(ctx: &mut SystemCtx) {
 
 /// The flythrough or the free camera.
 fn drive_camera(ctx: &mut SystemCtx) {
-    let dt = (ctx.time().delta_secs() as f32).min(0.1);
+    let dt = (ctx.time().delta_secs()).min(0.1);
     let (fwd, back, left, right, up, down, fast, look, mouse) = {
         let Some(input) = ctx.resources.get::<Input>() else {
             return;

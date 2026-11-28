@@ -250,7 +250,7 @@ struct Lit {
 fn lit_window(cx: u32, cy: u32, seed: u32, p: f32) -> Lit {
     let r = |k: u32| unit(hash(cx, cy, seed.wrapping_add(k * 977)));
     let on = r(1) < p;
-    let b = 0.35 + 0.65 * r(2) * r(2);
+    let b = 0.08 + 0.92 * r(2).powi(3);
     let t = r(3);
     let tint = if t < 0.5 {
         Vec3::new(1.0, 0.70, 0.36)
@@ -306,6 +306,8 @@ fn window_glass(lit: &Lit, ly: u32, y0: u32, y1: u32, depth: f32) -> Texel {
             // The ceiling lamp lights the top of the room more than the floor.
             let shade = 1.15 - 0.55 * ((v - lit.blind) / (1.0 - lit.blind + 1e-3));
             t.emis = lit.color * shade.max(0.25);
+            let wx = (ly * 7 + y0 * 3) % 13; // cheap per-row jitter
+            t.emis *= 0.85 + 0.03 * wx as f32;
             t.base = Vec3::new(0.08, 0.07, 0.06);
             t.metal = 0.2;
         } else {
@@ -342,7 +344,7 @@ fn concrete_texel(x: u32, y: u32, cx: u32, cy: u32, lx: u32, ly: u32, seed: u32)
                 f.height = 0.5;
                 return f;
             }
-            let lit = lit_window(cx, cy, seed, 0.42);
+            let lit = lit_window(cx, cy, seed, 0.26);
             let mut g = window_glass(&lit, ly, fy0, fy1, 3.0);
             // the lit pane's curtain / furniture silhouette
             if g.emis != Vec3::ZERO {
@@ -397,7 +399,7 @@ fn brick_texel(x: u32, y: u32, cx: u32, cy: u32, lx: u32, ly: u32, seed: u32) ->
                 f.height = 0.4;
                 return f;
             }
-            let lit = lit_window(cx, cy, seed, 0.5);
+            let lit = lit_window(cx, cy, seed, 0.3);
             return window_glass(&lit, ly, fy0, fy1, 4.0);
         }
         let mut f = Texel::new(Vec3::new(0.62, 0.6, 0.55), 0.6);
@@ -441,7 +443,7 @@ fn glass_texel(x: u32, y: u32, cx: u32, cy: u32, lx: u32, ly: u32, seed: u32) ->
     t.metal = 0.85;
     t.height = -0.3;
     // whole floors light up together, with gaps
-    let floor_on = unit(hash(cx * 2 + pane, cy, seed + 3)) < 0.34 && unit(hash(0, cy, seed + 11)) < 0.8;
+    let floor_on = unit(hash(cx * 2 + pane, cy, seed + 3)) < 0.22 && unit(hash(0, cy, seed + 11)) < 0.7;
     if floor_on {
         let c = unit(hash(cx * 2 + pane, cy, seed + 4));
         let tintc = if c < 0.6 {
@@ -474,7 +476,7 @@ fn stone_texel(x: u32, y: u32, cx: u32, cy: u32, lx: u32, ly: u32, seed: u32) ->
         t.base *= 0.8;
     }
     // pilasters at the cell edges
-    if lx < 6 || lx >= CELL - 6 {
+    if !(6..CELL - 6).contains(&lx) {
         t.height += 2.0;
         t.base *= 1.1;
         t.ao = 0.95;
@@ -496,7 +498,7 @@ fn stone_texel(x: u32, y: u32, cx: u32, cy: u32, lx: u32, ly: u32, seed: u32) ->
             f.height = 0.8;
             return f;
         }
-        let lit = lit_window(cx, cy, seed, 0.55);
+        let lit = lit_window(cx, cy, seed, 0.3);
         return window_glass(&lit, ly, wy0, wy1, 5.0);
     }
     t
@@ -551,7 +553,7 @@ pub fn shop_textures(seed: u32) -> TextureSet {
         }
         let shutter = kind < 0.08;
         // piers left and right
-        if lx < 5 || lx >= CELL - 5 {
+        if !(5..CELL - 5).contains(&lx) {
             t.base = Vec3::new(0.2, 0.18, 0.16) * (0.8 + 0.4 * n);
             t.height += 2.0;
             return t;
@@ -594,9 +596,11 @@ pub fn shop_textures(seed: u32) -> TextureSet {
         t.rough = 0.04;
         t.metal = 0.5;
         t.height = -2.0;
-        t.emis = warm * glow * 0.8;
+        t.emis = warm * glow.min(1.0) * 0.5 * (0.6 + 0.4 * unit(hash(cx, y / 14, seed + 5)));
         // mullions
-        if lx.abs_diff(34) < 1 && !door || (y == 26 || y == 85) {
+        if (lx.abs_diff(20) < 1 || lx.abs_diff(34) < 1 || lx.abs_diff(48) < 1) && !door
+            || (y == 26 || y == 85 || y == 56)
+        {
             t.emis = Vec3::ZERO;
             t.base = Vec3::splat(0.04);
             t.height = 0.5;
@@ -622,31 +626,30 @@ pub fn asphalt_textures(seed: u32) -> TextureSet {
         let coarse = fbm_t(u / 5.0, v / 5.0, 205, 2, seed + 1);
         let large = fbm_t(u / 256.0 * 4.0, v / 256.0 * 4.0, 4, 5, seed + 2);
         let patch = fbm_t(u / 128.0, v / 128.0, 8, 4, seed + 3);
-        let tone = 0.034 + 0.015 * coarse + 0.01 * grain + 0.014 * patch;
+        let tone = 0.028 + 0.012 * coarse + 0.008 * grain;
         let mut t = Texel::new(
-            Vec3::new(tone, tone * 0.99, tone * 1.03),
-            0.2 + 0.22 * coarse + 0.1 * grain,
+            Vec3::new(tone, tone * 0.99, tone * 1.04),
+            0.13 + 0.12 * coarse + 0.05 * grain,
         );
-        t.height = 1.1 * grain + 1.4 * coarse;
-        // cracks: thin dark ridges of a low frequency noise
+        t.height = 0.8 * grain + 1.0 * coarse;
+        // hairline cracks
         let c = fbm_t(u / 70.0, v / 70.0, 15, 4, seed + 4);
-        let crack = 1.0 - smooth(0.0, 0.018, (c - 0.5).abs());
+        let crack = 1.0 - smooth(0.0, 0.012, (c - 0.5).abs());
         if crack > 0.0 {
-            t.base *= 1.0 - 0.6 * crack;
-            t.height -= 3.0 * crack;
-            t.rough = mix(t.rough, 0.7, crack);
+            t.base *= 1.0 - 0.5 * crack;
+            t.height -= 2.0 * crack;
+            t.rough = mix(t.rough, 0.45, crack);
         }
-        // patch repairs: a smoother, darker rectangle-ish tone
-        // puddles
-        let p = fbm_t(u / 256.0 * 3.0, v / 256.0 * 3.0, 3, 5, seed + 9);
-        let mask = smooth(0.585, 0.605, p * 0.8 + large * 0.2 + 0.03 * coarse);
+        // puddles: small irregular patches, mirror smooth
+        let p = fbm_t(u / 256.0 * 6.0, v / 256.0 * 6.0, 6, 5, seed + 9);
+        let mask = smooth(0.6, 0.625, p + 0.03 * coarse);
         if mask > 0.0 {
-            t.rough = mix(t.rough, 0.025, mask);
-            t.base *= mix(1.0, 0.55, mask);
-            t.height *= 1.0 - 0.92 * mask;
+            t.rough = mix(t.rough, 0.02, mask);
+            t.base *= mix(1.0, 0.6, mask);
+            t.height *= 1.0 - 0.95 * mask;
             t.metal = 0.0;
         }
-        // overall: still-damp asphalt is a little glossier than dry
+        let _ = (large, patch);
         t.rough = t.rough.clamp(0.02, 1.0);
         t
     });
@@ -676,8 +679,8 @@ pub fn paving_textures(seed: u32) -> TextureSet {
         }
         // damp slabs
         let wet = smooth(0.5, 0.62, fbm_t(x as f32 / 70.0, y as f32 / 70.0, 7, 3, seed + 3));
-        t.rough = mix(t.rough, 0.07, wet);
-        t.base *= mix(1.0, 0.7, wet);
+        t.rough = mix(t.rough, 0.22, wet);
+        t.base *= mix(1.0, 0.8, wet);
         t
     });
     layers.finish(1.0)
@@ -736,14 +739,14 @@ pub fn palette() -> Palette {
     // (base linear, rough, metal, emissive linear)
     let z = Vec3::ZERO;
     let cells: [(Vec3, f32, f32, Vec3); 16] = [
-        (Vec3::ONE, 0.22, 0.35, z),
+        (Vec3::ONE, 0.12, 0.55, z),
         (Vec3::new(0.012, 0.02, 0.028), 0.04, 0.2, z),
         (Vec3::splat(0.025), 0.75, 0.0, z),
         (Vec3::new(0.28, 0.29, 0.31), 0.42, 1.0, z),
         (Vec3::new(0.62, 0.62, 0.6), 0.45, 0.0, z),
         (Vec3::new(0.62, 0.42, 0.04), 0.45, 0.0, z),
         (Vec3::new(0.9, 0.8, 0.6), 0.3, 0.0, Vec3::new(1.0, 0.72, 0.38)),
-        (Vec3::new(0.25, 0.01, 0.01), 0.3, 0.0, Vec3::new(1.0, 0.04, 0.02) * 0.6),
+        (Vec3::new(0.25, 0.01, 0.01), 0.3, 0.0, Vec3::new(1.0, 0.04, 0.02) * 0.9),
         (Vec3::new(0.02, 0.2, 0.08), 0.3, 0.0, Vec3::new(0.05, 1.0, 0.3) * 0.4),
         (Vec3::new(0.3, 0.15, 0.01), 0.3, 0.0, Vec3::new(1.0, 0.5, 0.04) * 0.5),
         (Vec3::new(0.0, 0.2, 0.25), 0.3, 0.0, Vec3::new(0.05, 0.85, 1.0) * 0.75),
@@ -821,7 +824,7 @@ pub fn glow_texture() -> ImageData {
 
 /// The direction toward the sun: low over the horizon, a little off the streets' axis.
 pub fn sun_direction() -> Vec3 {
-    let (el, az) = (7.5f32.to_radians(), 18.0f32.to_radians());
+    let (el, az) = (6.0f32.to_radians(), 18.0f32.to_radians());
     Vec3::new(el.cos() * az.sin(), el.sin(), -el.cos() * az.cos()).normalize()
 }
 
