@@ -1,4 +1,4 @@
-# Post-processing: bloom, auto exposure, color grading, FXAA, lens effects, distortion
+# Post-processing: bloom, auto exposure, color grading, FXAA, lens effects, distortion, city effects
 
 Post effects run in a camera's post group after its scene is drawn, in exposed HDR units, and
 end in the one composite pass that writes the display target (see [`frame.md`](frame.md) for
@@ -9,7 +9,8 @@ This page covers bloom (milestone PO1, with the M1.1 position-stable prefilter),
 (PO2), the display-space effects FXAA, vignette, chromatic aberration and film grain (PO3), color
 grading with 3D LUTs and WGSL hooks (PO4), screen-space distortion — heat haze, shockwaves —
 (PO5) and the hardening of the whole chain: GPU timings, pass and memory counts, allocations,
-resizes, device loss and the performance gate (PO6). `examples/post_processing` shows every
+resizes, device loss and the performance gate (PO6). The city effects (height/distance fog,
+SSAO, SSR: opt-in, before bloom) are in "City effects". `examples/post_processing` shows every
 effect on a top-down space scene, toggled with keys.
 
 ```rust
@@ -823,6 +824,130 @@ allocates nothing in the steady state.
 * Pixels bordering closer geometry blend across one buffer texel (half resolution): the
   occluder's outline moves by at most about a pixel; its interior is exact.
 * No refraction of the scene color itself (a scene-color copy is deferred, spec D4).
+
+## City effects: fog, SSAO, SSR
+
+Three opt-in effects for photographic scenes (a city street, an interior): height/distance fog,
+screen-space ambient occlusion and screen-space reflections. They are fields of the camera's
+`PostProcess` (`fog`, `ssao`, `ssr`), disabled by default; a camera that enables none renders
+pixel-identical to before and records no extra pass, texture or draw (tested:
+`disabled_effects_are_pixel_identical_and_record_nothing`). The public surface is listed in
+[`city-effects-api.md`](city-effects-api.md); `cargo run -p space3d-render --example
+city_effects -- out_dir` renders a wet-street scene with each effect off and on.
+
+```rust
+use space3d::render::{Fog, Ssao, Ssr};
+
+PostProcess::default()
+    .with_ssr(Ssr::on())                    // reflections in wet asphalt and glass
+    .with_ssao(Ssao::on().with_radius(1.5)) // contact shadows in creases
+    .with_fog(Fog::city_haze());            // haze with a sun lobe, thinner with height
+```
+
+### Where they run
+
+All three work on the linear HDR scene colour of the post group, **before bloom and exposure**,
+in the order SSR, SSAO, fog (fog last, so distance hides what the other two did). They are one
+extra stage of the post chain: the frame hands the settings camera's single-sample scene depth
+(a multisampled depth is resolved for it, as for the SceneRead and Distortion passes) and its
+`View` uniform to the effect passes, which write a pooled copy `S'` of the scene colour that
+bloom, auto exposure and the composite then read instead of `S`.
+
+| Condition | Result |
+|---|---|
+| `FrameMode::Hdr`, depth available | the effects run |
+| `HdrMode::Ldr` / no float render targets (WebGL2) | all three disabled, warned once; the image equals the one without them |
+| Direct mode (no post) | not applicable: effects need a `PostProcess` camera |
+| GL, multisampled scene | no sampleable multisampled depth: disabled (`GraphicsCaps::msaa_depth_resolve`) |
+| SSR without read-only depth attachments (GL) | SSR alone is disabled; fog and SSAO still run |
+| capture replay that does not re-render the scene | the replayed image has no effects (depth is not kept) |
+
+### Fog
+
+`Fog` integrates the density `density * exp(-height_falloff * (y - base_height))` analytically
+along the view ray (Y up), `opacity = min(1 - exp(-tau), max_opacity)`, and mixes the pixel
+toward the fog colour. The colour is `color` plus a sun lobe `sun_color * sun_intensity *
+pow(max(dot(view_dir, -sun_dir), 0), sun_exponent)`; the sun is the first directional light of
+the view unless `sun_direction` is set. Sky pixels (depth at the far plane) take
+`sky_amount * exp(-sky_falloff * max(view_dir.y, 0))`, so the haze meets the horizon.
+`Fog::opacity` is the CPU mirror of the shader (tested against the rendered pixels).
+
+* Cost: one full-screen pass over the group's rect (no extra textures except the pooled `S'`).
+* Sky fog multiplies the sky radiance; with bloom on, keep `Bloom::threshold` above the fogged
+  sky or the horizon blooms.
+
+### SSAO
+
+Ground-truth ambient occlusion (Jimenez et al., 2016, in XeGTAO's formulation): per pixel
+`slices` directions, `steps` samples per side of each, a horizon angle search in view space and
+the analytic cosine-weighted visibility integral, from the depth alone (view-space normals are
+reconstructed from the closer depth neighbour on each axis). Interleaved gradient noise rotates
+the slices and jitters the steps; a separable depth-aware blur (distance of the neighbour's
+surface point from this pixel's tangent plane, so slanted ground blurs along itself) removes it.
+Samples on the surface's own plane (within `bias` of its tangent) never occlude: depth
+quantization would otherwise darken flat ground at grazing angles.
+
+* The AO texture is `R8Unorm` at half resolution (`half_res`), pooled; two blur passes.
+* The result multiplies the *finished* HDR colour by `mix(1, ao^power, intensity)`. A forward
+  renderer has no ambient or diffuse-IBL buffer to scale instead, so direct light is darkened in
+  creases as well; keep `intensity` moderate on strongly lit scenes, or lower `radius`.
+* Perspective cameras only (the horizon search assumes `V = normalize(-P)`).
+
+### SSR
+
+A linear ray march of the reflected ray in view space, stepped in screen space (perspective-correct
+depth by interpolating `1/w`), a thickness test (`thickness + 3 % of the ray depth`), a 5-step
+binary refinement, a per-pixel jitter hiding the step banding. The hit takes the scene colour
+(`S`, before this frame's effects) at the hit pixel. The reflection weight is
+`F0 * A + B` from the existing BRDF table (the forward shader's split-sum terms) times a
+roughness fade (`max_roughness`, from 60 % of it down to 0) times an edge fade (`edge_fade`) times
+a fade over the last 40 % of the ray. On a hit the forward pass's cubemap specular is *replaced*:
+`colour += weight * (hit - env_specular(reflect, roughness))`, so misses, rough surfaces and
+the screen edge keep the IBL reflection the forward shader already produced.
+
+**G-buffer-lite.** SSR needs a normal, a roughness and a reflectivity per pixel, which the forward
+pass does not store. For a camera with `ssr.enabled` the frame records one extra pass after the
+scene pass (`RenderStats::render_passes + 1`): the view's opaque draws again with
+`PassKind::GBuffer` (`fs_gbuffer` of the forward template: the same material evaluation, no
+lighting), depth-tested `LessEqual` read-only against the single-sample scene depth, into a
+per-camera `Rgba8Unorm` target (octahedral world normal, roughness, F0 as the max channel of
+`mix(0.04, base, metallic)`; `0` = no reflection: unlit and cleared pixels). Custom-shader
+materials take part with their material parameters (their fragment hook is not run). Costs
+4 bytes per scene pixel while enabled, and the opaque draw calls again.
+
+Limitations (v1): blended (glass-as-alpha) materials are not in the G-buffer, so use an opaque
+smooth, dark, metallic material for glass; reflections only show what is on screen (the rest
+falls back to the cubemap); the reflection tint is the F0 maximum (metals reflect untinted);
+a pixel's own G-buffer entry is the front-most opaque surface of the settings camera.
+
+### Quality tiers
+
+`GraphicsQuality::post(base)` caps what was authored (lossless: the authored look comes back on
+a higher tier) and turns the expensive ones off:
+
+| Tier | Fog | SSAO | SSR |
+|---|---|---|---|
+| Low | kept, sun lobe off | off | off |
+| Medium | as authored | 1 slice x 4 steps, half res, blur 2 | off |
+| High | as authored | up to 2 x 6 | up to 32 steps |
+| Ultra | as authored | up to 3 x 8 | as authored (up to 128 steps) |
+
+### Cost
+
+Passes added per post group (`RenderStats::screen_fx_passes`): fog alone 1 (apply), SSAO 3 (AO +
+two blurs) + apply, SSR 1 (apply) plus the G-buffer pass counted in `render_passes`. Several
+effects share the one apply pass: all three on a 960x540 headless frame record 16 render passes
+against 12 without (`city_effects` example). Memory: the pooled `S'` (one scene texture), two
+`R8` AO textures (a quarter of the pixels each at half resolution), the camera's `Rgba8` G-buffer.
+
+### Tests
+
+Unit: parameter packing and the plan (`post/screenfx.rs`), the fog's CPU mirror
+(`post/city.rs`), tier caps (`quality.rs`). GPU (`tests/city_effects.rs`, skipped without an
+adapter): disabled effects are pixel-identical and record nothing; fog opacity against the CPU
+mirror at two distances and its height falloff; the same fog through a resolved MSAA depth;
+SSAO darkens a floor-wall crease and leaves open floor within 3 %; SSR puts a red box into a
+glossy floor and changes nothing above the horizon; all three off in the Ldr fallback.
 
 ## Hardening (PO6)
 

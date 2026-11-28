@@ -1,8 +1,10 @@
 # City effects API (fog, SSAO, SSR) - public surface
 
-Status: API contract, written before the implementation so the city demo can code against it.
-Implementation lands on branch `gfx/city-realism`; field names and defaults below are final.
-Full documentation moves to `docs/graphics/post.md` when the effects land.
+Status: implemented on branch `gfx/city-realism` exactly as listed here (the contract was written
+first; nothing was renamed). Full documentation: `docs/graphics/post.md`, "City effects". Extras
+beyond this list: `PostProcess::screen_effects()` (any of the three enabled), `Fog::opacity(camera_y,
+point_y, distance)` (CPU mirror of the shader), `RenderStats::screen_fx_passes`, and the example
+`cargo run -p space3d-render --example city_effects -- out_dir [w h]` (wet street, each effect on/off).
 
 All three are opt-in fields of the camera's `PostProcess` component (same place as `bloom`,
 `vignette`, ...). A camera whose `PostProcess` leaves them at their defaults (all
@@ -145,7 +147,9 @@ Switching tiers is lossless (the authored values are kept, as for the other post
 | High | as authored | as authored, `slices 2, steps 6` (capped) | on if authored: `steps` capped at 32 |
 | Ultra | as authored | as authored (capped at `slices 3, steps 8`) | as authored |
 
-Ldr fallback / WebGL2 / Direct mode: all three disabled (warned once).
+Ldr fallback / WebGL2 / Direct mode: all three disabled (warned once). SSR alone is also disabled
+without read-only depth attachments; blended (alpha) materials are not in the SSR G-buffer, so model
+glass as an opaque smooth dark metallic material.
 
 ## Notes for the demo
 

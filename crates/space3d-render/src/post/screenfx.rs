@@ -31,6 +31,9 @@ pub(crate) const AO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 /// reflection).
 pub(crate) const GBUFFER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
+/// Tag of the generation of the effects' output (see [`ScreenFx::encode`]).
+const FX_GENERATION: u64 = 1 << 62;
+
 const SLOT: u64 = 256;
 const SLOTS: u64 = 64;
 
@@ -603,7 +606,9 @@ impl ScreenFx {
             (input.view_bind_group, input.depth_bind_group, &bg),
             (offsets, fx_offset),
         );
-        Some((out_view, out_gen))
+        // The pool and the scene textures count generations separately: tag this one so a
+        // composite bind group cached for a scene texture is never taken for it.
+        Some((out_view, out_gen | FX_GENERATION))
     }
 
     fn count(&mut self, stats: &mut RenderStats, generation: u64, bytes: u64) {

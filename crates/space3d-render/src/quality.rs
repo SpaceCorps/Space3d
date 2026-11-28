@@ -123,6 +123,11 @@ impl GraphicsQuality {
     ///   them as authored (the spec table's "on": available, never forced — they change the
     ///   look).
     ///
+    /// * the city effects (docs/graphics/post.md, "City effects"): Low drops SSAO and SSR and
+    ///   the fog's sun in-scatter (the fog itself stays: one cheap pass); Medium caps SSAO at
+    ///   1 slice x 4 steps at half resolution with a 2-tap blur and drops SSR; High caps SSAO at
+    ///   2 x 6 and SSR at 32 steps; Ultra caps SSAO at 3 x 8. Caps only lower what was authored.
+    ///
     /// Everything else (tonemapper, exposure, bloom intensity, grading, distortion, dither)
     /// stays as authored.
     pub fn post_for(self, base: PostProcess, msaa_samples: u32) -> PostProcess {
@@ -139,6 +144,27 @@ impl GraphicsQuality {
             Self::High if !msaa => p.anti_aliasing = AntiAliasing::Fxaa(FxaaQuality::High),
             Self::Ultra if !msaa => p.anti_aliasing = AntiAliasing::Fxaa(FxaaQuality::Ultra),
             _ => {}
+        }
+        // The city effects.
+        let (slices, steps, ssr_steps) = match self {
+            Self::Low | Self::Medium => (1, 4, 0),
+            Self::High => (2, 6, 32),
+            Self::Ultra => (3, 8, 128),
+        };
+        p.ssao.slices = p.ssao.slices.min(slices);
+        p.ssao.steps = p.ssao.steps.min(steps);
+        match self {
+            Self::Low => {
+                p.fog.sun_intensity = 0.0;
+                p.ssao.enabled = false;
+                p.ssr.enabled = false;
+            }
+            Self::Medium => {
+                p.ssao.half_res = true;
+                p.ssao.blur_radius = p.ssao.blur_radius.min(2);
+                p.ssr.enabled = false;
+            }
+            _ => p.ssr.steps = p.ssr.steps.min(ssr_steps),
         }
         p
     }
@@ -400,6 +426,38 @@ mod tests {
         assert_eq!(Q::ALL.map(Q::name), ["Low", "Medium", "High", "Ultra"]);
         assert_eq!(Q::Ultra.to_string(), "Ultra");
         assert!(Q::Low < Q::Medium && Q::High < Q::Ultra);
+    }
+
+    #[test]
+    fn city_effects_follow_the_tier_and_stay_lossless() {
+        use crate::post::api::{Fog, Ssao, Ssr};
+        use GraphicsQuality as Q;
+        let authored = PostProcess::default()
+            .with_fog(Fog::city_haze())
+            .with_ssao(Ssao::on().with_quality(4, 12))
+            .with_ssr(Ssr::on().with_steps(96));
+        let low = Q::Low.post(authored);
+        assert!(
+            low.fog.enabled && low.fog.sun_intensity == 0.0,
+            "fog stays, no sun lobe"
+        );
+        assert!(!low.ssao.enabled && !low.ssr.enabled);
+        let medium = Q::Medium.post(authored);
+        assert!(medium.ssao.enabled && !medium.ssr.enabled);
+        assert_eq!((medium.ssao.slices, medium.ssao.steps), (1, 4));
+        assert!(medium.ssao.half_res && medium.ssao.blur_radius <= 2);
+        let high = Q::High.post(authored);
+        assert_eq!((high.ssao.slices, high.ssao.steps, high.ssr.steps), (2, 6, 32));
+        assert!(high.ssr.enabled);
+        let ultra = Q::Ultra.post(authored);
+        assert_eq!((ultra.ssao.slices, ultra.ssao.steps, ultra.ssr.steps), (3, 8, 96));
+        assert_eq!(ultra.fog, authored.fog, "fog is never touched above Low");
+        // Caps only lower: a cheap authored SSAO is kept on every tier that has it.
+        let cheap = PostProcess::default().with_ssao(Ssao::on().with_quality(1, 3));
+        let u = Q::Ultra.post(cheap);
+        assert_eq!((u.ssao.slices, u.ssao.steps), (1, 3));
+        // Nothing enabled stays nothing enabled.
+        assert!(!Q::Ultra.post(PostProcess::default()).screen_effects());
     }
 
     #[test]
