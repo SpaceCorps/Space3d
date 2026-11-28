@@ -7,8 +7,6 @@ use crate::mesh::MeshBuilder;
 use crate::procgen::{cell, cell_uv};
 use space3d::prelude::*;
 
-const DATA: &[u8] = include_bytes!("../assets/models/quaternius_human.bin");
-
 /// One path a pedestrian paces: from `origin` along `axis` for `len` meters and back.
 #[derive(Clone, Copy)]
 pub struct Walker {
@@ -91,15 +89,16 @@ fn u32_at(b: &[u8], o: usize) -> u32 {
 }
 
 /// The human in outfit `o`; `mirror` flips left and right (the other half of the stride).
-pub fn mesh(o: &Outfit, mirror: bool) -> MeshData {
-    let (nv, ni) = (u32_at(DATA, 0) as usize, u32_at(DATA, 4) as usize);
+pub fn mesh(o: &Outfit, mirror: bool) -> Option<MeshData> {
+    let data: &[u8] = asset!("models/quaternius_human.bin")?;
+    let (nv, ni) = (u32_at(data, 0) as usize, u32_at(data, 4) as usize);
     let uv = cell_uv(cell::CONCRETE);
     let mut b = MeshBuilder::new();
     let flip = if mirror { -1.0 } else { 1.0 };
     for i in 0..nv {
         let at = 8 + i * 28;
-        let g = |k: usize| f32_at(DATA, at + k * 4);
-        let col = match u32_at(DATA, at + 24) {
+        let g = |k: usize| f32_at(data, at + k * 4);
+        let col = match u32_at(data, at + 24) {
             0 => o.skin,
             1 => o.pants,
             2 => o.shirt,
@@ -115,7 +114,7 @@ pub fn mesh(o: &Outfit, mirror: bool) -> MeshData {
     }
     let base = 8 + nv * 28;
     for t in 0..ni / 3 {
-        let ix = |k: usize| u32_at(DATA, base + (t * 3 + k) * 4);
+        let ix = |k: usize| u32_at(data, base + (t * 3 + k) * 4);
         if mirror {
             b.m.indices.extend_from_slice(&[ix(0), ix(2), ix(1)]);
         } else {
@@ -125,7 +124,7 @@ pub fn mesh(o: &Outfit, mirror: bool) -> MeshData {
     if let Some(c) = o.umbrella {
         umbrella(&mut b, c);
     }
-    b.finish()
+    Some(b.finish())
 }
 
 /// A canopy (two-sided cone) on a thin shaft, held over the right shoulder.
