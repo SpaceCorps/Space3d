@@ -5,6 +5,7 @@
   {"id": "web_demo", "title": "Web demo", "blurb": "4,096 instanced cubes in a single draw call.", "controls": "drag to orbit · wheel/pinch to zoom · tap to recolor · 1–3 patterns"},
   {"id": "pbr_showcase", "title": "PBR showcase", "blurb": "Materials, shadows and every blend mode in a top-down space scene.", "controls": "drag to look around · wheel/pinch to zoom"},
   {"id": "graphics_showcase", "title": "Graphics showcase", "blurb": "Every graphics feature in one reference scene.", "controls": "Q quality · 1 bloom · 2 shadows · 3 IBL · 4 distortion · C follow · arrows pan · wheel zoom"},
+  {"id": "city_demo", "title": "City at dusk", "blurb": "A rain-soaked procedural city: fog, SSAO, screen-space reflections, CC0 PBR assets and a camera flythrough.", "controls": "watch the flythrough · F free-fly (WASD, right-drag) · Q quality · P pause · H hide panel"},
   {"id": "post_processing", "title": "Post processing", "blurb": "Bloom, FXAA, vignette, grain, grading — toggled live.", "controls": "keys 1–9 toggle effects · T tonemapper"},
   {"id": "particles", "title": "Particles", "blurb": "The particle library in a small space battle.", "controls": "watch the battle"},
   {"id": "particles_stress", "title": "Particle stress", "blurb": "Streaming additive glows; the web budget is capped.", "controls": "watch the vortex"},
