@@ -136,6 +136,8 @@ pub(crate) struct FramePostGroup {
     /// The Distortion phase runs for this group this frame: `PostProcess::distortion` is
     /// enabled and a Distortion slot has work in the settings camera's view (graphics spec §1.8).
     pub(super) distortion: bool,
+    /// The city effects (fog, SSAO, SSR) that run for this group this frame (`post::screenfx`).
+    pub(super) fx: crate::post::FxPlan,
 }
 
 /// Plan of one camera this frame.
@@ -155,6 +157,7 @@ pub(crate) struct PlanWarnings {
     hdr_target_post: bool,
     camera_frame_ignored: bool,
     hdr_msaa: bool,
+    screen_fx_mode: bool,
 }
 
 /// The display target of a render-target camera: `(size, format, samples)`, `None` while the
@@ -209,6 +212,7 @@ impl FrameState {
         let f = self;
         f.groups.clear();
         f.post_groups.clear();
+        f.post_depths.clear();
         f.camera_plans.clear();
         // Groups in order of their first camera; every camera's group.
         for ci in 0..f.cameras.len() {
@@ -373,6 +377,7 @@ impl FrameState {
                     tonemapper: Tonemapper::None,
                     view: None,
                     distortion: false,
+                    fx: crate::post::FxPlan::default(),
                 });
             } else {
                 for c in 0..f.cameras.len() {
@@ -386,7 +391,7 @@ impl FrameState {
                     } else {
                         (OutputEncoding::Tonemapped, post.exposure.exp2(), post.tonemapper)
                     };
-                    let pg = FramePostGroup {
+                    let mut pg = FramePostGroup {
                         group: g,
                         camera: c,
                         settings: post,
@@ -398,7 +403,20 @@ impl FrameState {
                         tonemapper,
                         view: None,
                         distortion: false,
+                        fx: crate::post::FxPlan::default(),
                     };
+                    if post.enabled && post.screen_effects() {
+                        // The settings camera's depth must exist at one sample: a multisampled
+                        // depth is resolved (not on GL, where it cannot be sampled).
+                        let depth = samples <= 1 || graphics.msaa_depth_resolve;
+                        pg.fx = crate::post::screen_fx_plan(&post, mode, depth, graphics.read_only_depth);
+                        if mode != FrameMode::Hdr && !warnings.screen_fx_mode {
+                            warnings.screen_fx_mode = true;
+                            tracing::warn!(
+                                "fog, SSAO and SSR are off in the Ldr fallback (no float render targets or                                  HdrMode::Ldr)"
+                            );
+                        }
+                    }
                     match f.post_groups[start..]
                         .iter_mut()
                         .find(|p| p.display_rect == display_rect)

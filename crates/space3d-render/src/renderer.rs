@@ -368,6 +368,8 @@ pub struct Renderer {
     pub(crate) nodes: crate::frame::NodeCache,
     /// Scene-input bind groups (group 1 of node and overlay passes) and depth resolves.
     pub(crate) scene_inputs: crate::frame::SceneInputs,
+    /// The city effects' pipelines and G-buffers, created by the first camera that enables one.
+    pub(crate) screen_fx: Option<crate::post::ScreenFx>,
     /// Submissions of the last [`crate::frame::MAX_FRAMES_IN_FLIGHT`] frames (slot: frame index
     /// modulo the count): `render_frame` waits for the oldest before it is replaced.
     pub(crate) in_flight: [Option<wgpu::SubmissionIndex>; crate::frame::MAX_FRAMES_IN_FLIGHT],
@@ -654,6 +656,7 @@ impl Renderer {
             plan_warnings: Default::default(),
             nodes: Default::default(),
             scene_inputs,
+            screen_fx: None,
             in_flight: Default::default(),
             lighting,
             injected_depth_views: Vec::new(),

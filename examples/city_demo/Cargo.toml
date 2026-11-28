@@ -1,0 +1,11 @@
+[package]
+name = "city_demo"
+description = "Space3d example: a procedural city at golden hour after rain — PBR facades with lit windows, wet asphalt, street lamps, traffic, steam and rain, a sunset sky as skybox and image-based light, AgX post, and a cinematic flythrough"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+# `test`: the headless PNG (`save_png`).
+space3d = { workspace = true, features = ["particles", "test"] }

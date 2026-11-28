@@ -958,7 +958,7 @@ mod tests {
             .unwrap_or_else(|e| panic!("{e}"));
     }
 
-    /// `View` in `VIEW_WGSL` is the 1376-byte layout of graphics spec §3.3 (its first 752 bytes
+    /// `View` in `VIEW_WGSL` is the 1392-byte layout of graphics spec §3.3 (its first 752 bytes
     /// are today's forward `View`, the first 1312 the layout frozen at F3; `inv_proj_rot` is
     /// appended after them).
     #[test]
@@ -972,7 +972,7 @@ mod tests {
         let wgpu::naga::TypeInner::Struct { members, span } = &view.inner else {
             panic!("View is a struct")
         };
-        assert_eq!(*span, 1376);
+        assert_eq!(*span, 1392);
         let offset = |name: &str| members.iter().find(|m| m.name.as_deref() == Some(name)).unwrap().offset;
         assert_eq!(offset("view"), 752, "the forward prefix is unchanged");
         assert_eq!(offset("viewport"), 1008);

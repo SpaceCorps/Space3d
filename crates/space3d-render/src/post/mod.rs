@@ -19,12 +19,14 @@
 pub(crate) mod api;
 mod bloom;
 mod chain;
+mod city;
 mod distortion_mesh;
 mod exposure;
 mod fxaa;
 mod grading;
 mod lut;
 mod readback;
+mod screenfx;
 
 use crate::assets::RenderAssets;
 use crate::caps::GraphicsCaps;
@@ -41,6 +43,12 @@ use bloom::{BloomPlan, BloomState};
 use chain::{CompositePlan, GpuPost, SeedKey};
 use exposure::{MeterPath, MeterPlan, Meters};
 use fxaa::{FxaaModules, LDR_FORMAT};
+pub(crate) use screenfx::{FxEncode, FxInput, FxPlan, GBUFFER_FORMAT, ScreenFx};
+
+/// The city effects a post group runs (see `screenfx::plan`).
+pub(crate) fn screen_fx_plan(s: &PostProcess, mode: FrameMode, depth: bool, read_only_depth: bool) -> FxPlan {
+    screenfx::plan(s, mode, false, depth, read_only_depth)
+}
 use readback::ExposureReadback;
 use space3d_core::{Entity, World};
 use std::borrow::Cow;

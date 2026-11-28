@@ -203,6 +203,14 @@ impl Material {
         self.alpha_cutoff = cutoff;
         self
     }
+    /// Tile every map `u` x `v` times across the mesh's UV range (a `uv_transform` scale; the
+    /// maps' addressing must be `Repeat`, the default). With `MeshData::cuboid_tiled` /
+    /// `plane_tiled` (UVs in world tiles) a 1 k wall texture keeps its real-world scale.
+    pub fn with_tiling(mut self, u: f32, v: f32) -> Self {
+        self.uv_transform.scale = glam::Vec2::new(u, v);
+        self
+    }
+
     /// Set the UV transform of every map.
     pub fn with_uv_transform(mut self, t: TextureTransform) -> Self {
         self.uv_transform = t;

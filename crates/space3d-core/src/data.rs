@@ -162,6 +162,38 @@ impl MeshData {
         m
     }
 
+    /// Axis-aligned box centred at origin with the given extents whose UVs are in tiles of
+    /// `tile` world units: a face `w` x `h` units spans `w / tile` x `h / tile` in UV, so a
+    /// repeating texture keeps its real-world scale on any box size (facades, walls, floors).
+    /// Same vertex layout and face order as [`Self::cube`] (unit size, then scaled).
+    pub fn cuboid_tiled(size: Vec3, tile: f32) -> Self {
+        let mut m = Self::cube(1.0);
+        let tile = tile.max(1e-6);
+        for ((p, uv), n) in m.positions.iter_mut().zip(m.uvs.iter_mut()).zip(&m.normals) {
+            // The face's two extents: the axes the normal is not along.
+            let (a, b) = if n[0].abs() > 0.5 {
+                (size.z, size.y)
+            } else if n[1].abs() > 0.5 {
+                (size.x, size.z)
+            } else {
+                (size.x, size.y)
+            };
+            *uv = [uv[0] * a / tile, uv[1] * b / tile];
+            *p = [p[0] * size.x, p[1] * size.y, p[2] * size.z];
+        }
+        m
+    }
+
+    /// XZ plane facing +Y with UVs in tiles of `tile` world units (see [`Self::cuboid_tiled`]).
+    pub fn plane_tiled(size: f32, tile: f32) -> Self {
+        let mut m = Self::plane(size);
+        let t = size / tile.max(1e-6);
+        for uv in &mut m.uvs {
+            *uv = [uv[0] * t, uv[1] * t];
+        }
+        m
+    }
+
     /// XZ plane facing +Y.
     pub fn plane(size: f32) -> Self {
         let h = size / 2.0;

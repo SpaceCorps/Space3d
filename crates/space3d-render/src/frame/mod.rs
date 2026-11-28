@@ -162,6 +162,10 @@ pub(crate) struct FrameState {
     /// group and role (parallel to `cameras`). Kept until the next frame (capture replays).
     groups: Vec<TargetGroup>,
     post_groups: Vec<FramePostGroup>,
+    /// The single-sample scene depth of each post group's settings camera, for the groups
+    /// running the city effects (parallel to `post_groups`, filled by the scene pass) with the
+    /// view's bind group index and the dynamic offset of its `View` uniform.
+    post_depths: Vec<Option<(wgpu::TextureView, usize, u32)>>,
     camera_plans: Vec<CameraPlan>,
     /// Scene textures of intermediate groups, by target (freed 3 frames after last use).
     group_textures: FastMap<GroupTarget, GroupTextures>,
@@ -317,6 +321,7 @@ impl FrameState {
             light_order: Vec::new(),
             groups: Vec::new(),
             post_groups: Vec::new(),
+            post_depths: Vec::new(),
             camera_plans: Vec::new(),
             group_textures: FastMap::default(),
             texture_generation: 0,
@@ -617,6 +622,9 @@ impl Renderer {
         self.post.begin_frame(&self.frame.info, &frame_settings);
         self.frame.pool.begin_frame(self.frame_index);
         self.scene_inputs.begin_frame(self.frame_index);
+        if let Some(fx) = &mut self.screen_fx {
+            fx.begin_frame(self.frame_index);
+        }
         // Snapshots of the registered nodes and overlays (re-read only when they changed); the
         // overlays' stages are read every frame.
         self.nodes.sync(resources.get::<crate::node::RenderNodes>());

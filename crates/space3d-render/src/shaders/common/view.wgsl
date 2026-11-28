@@ -1,5 +1,5 @@
 // Space3d view uniform (`VIEW_WGSL` appends `@group(0) @binding(0) var<uniform> view: View;`).
-// Exactly the forward shader's `View` (std140-compatible, 1376 bytes; the first 1312 are the
+// Exactly the forward shader's `View` (std140-compatible, 1392 bytes; the first 1312 are the
 // layout frozen at graphics milestone F3, later members are appended). Node and overlay shaders
 // must not redefine `DirLight`, `PointLight`, `View` or `view`.
 
@@ -42,4 +42,5 @@ struct View {
     // `inv_view_proj` is the f32 inverse of `view_proj`: it carries the camera position and is
     // badly conditioned far from the origin; prefer this for directions.
     inv_proj_rot: mat4x4<f32>,
+    sky_ground: vec4<f32>,      // Skybox ground color (linear rgb), blend half-width in view-direction Y (0 = off)
 }

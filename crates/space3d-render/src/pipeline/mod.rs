@@ -87,6 +87,9 @@ pub(crate) enum PassKind {
     Depth,
     /// Depth-only pass with alpha-masked discards.
     DepthMask,
+    /// The SSR G-buffer-lite pass (`fs_gbuffer`): normal, roughness and F0 of opaque surfaces
+    /// into an `Rgba8Unorm` target, depth-tested (no depth writes) over the scene depth.
+    GBuffer,
 }
 
 /// `PipelineKey::kinds` bit: the color maps (base color, emissive) are multi-layer arrays
@@ -1238,7 +1241,7 @@ mod tests {
             std::mem::size_of::<GpuView>(),
             64 + 16 * 3 + 32 * (MAX_DIR_LIGHTS + MAX_POINT_LIGHTS) + 560 + 64
         );
-        assert_eq!(std::mem::size_of::<GpuView>(), 1376);
+        assert_eq!(std::mem::size_of::<GpuView>(), 1392);
         assert_eq!(std::mem::size_of::<GpuMaterial>(), 112);
         assert_eq!(std::mem::size_of::<GpuCullParams>(), 32);
         assert_eq!(std::mem::size_of::<GpuFrustum>(), 112);
@@ -1289,6 +1292,7 @@ mod tests {
             ("sky_rotation", offset_of!(GpuView, sky_rotation)),
             ("sky_params", offset_of!(GpuView, sky_params)),
             ("inv_proj_rot", offset_of!(GpuView, inv_proj_rot)),
+            ("sky_ground", offset_of!(GpuView, sky_ground)),
         ];
         assert_eq!(members.len(), rust.len(), "every WGSL member has a Rust field");
         for (member, (name, offset)) in members.iter().zip(rust) {

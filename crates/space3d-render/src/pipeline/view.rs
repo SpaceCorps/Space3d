@@ -24,7 +24,7 @@ pub(crate) struct GpuPointLight {
     pub color: [f32; 4],
 }
 
-/// Matches `View` in `shaders/common/view.wgsl` (std140-compatible, 1376 bytes; a WGSL
+/// Matches `View` in `shaders/common/view.wgsl` (std140-compatible, 1392 bytes; a WGSL
 /// `mat3x3<f32>` is three 16-byte columns). The first 752 bytes are the original forward view,
 /// the first 1312 the layout frozen at graphics milestone F3; later fields are appended
 /// (`inv_proj_rot`). It holds no per-frame-varying data: a still camera with static lights
@@ -72,4 +72,6 @@ pub(crate) struct GpuView {
     /// `inv_view_proj` (the `f32` inverse of `view_proj`, kept for compatibility) it is exact
     /// at any distance from the origin; the sky derives every pixel's direction from it.
     pub inv_proj_rot: [[f32; 4]; 4],
+    /// `Skybox::ground`: linear rgb color, blend half-width (0 = off).
+    pub sky_ground: [f32; 4],
 }

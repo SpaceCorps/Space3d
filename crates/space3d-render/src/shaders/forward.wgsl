@@ -543,3 +543,62 @@ fn fs_main(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f
     let color = fragment_hook(in, vec4<f32>(rgb, alpha));
     return s3d_output(color, S3D_OUTPUT, view.exposure.x, view.output.y);
 }
+
+// SSR G-buffer-lite (`PassKind::GBuffer`, entry `fs_gbuffer`; docs/graphics/post.md, "SSR"):
+// the octahedral world normal (rg), roughness (b) and F0 (a; 0 = no reflection: unlit surfaces)
+// of an opaque surface, drawn depth-tested over the scene depth after the scene pass. The same
+// material evaluation as `fs_main` (maps, flags, normal mapping), none of the lighting.
+fn s3d_oct_encode(n: vec3<f32>) -> vec2<f32> {
+    let a = n / (abs(n.x) + abs(n.y) + abs(n.z));
+    var e = a.xy;
+    if (a.z < 0.0) {
+        e = (vec2<f32>(1.0) - abs(a.yx)) * vec2<f32>(select(-1.0, 1.0, a.x >= 0.0), select(-1.0, 1.0, a.y >= 0.0));
+    }
+    return e * 0.5 + vec2<f32>(0.5);
+}
+
+@fragment
+fn fs_gbuffer(in: VsOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
+    let flags = material.flags.x;
+    let ext_tangent = s3d_frag_tangent(in);
+    let uv1 = select(in.uv, s3d_frag_uv1(in), abs(ext_tangent.w) > 0.5);
+    let tex = sample_base(s3d_map_uv(S3D_MAP_BASE, in.uv, uv1), in.layer);
+    let texel = mix(vec4<f32>(1.0), tex, material.params.z);
+    let base = material.base_color * in.color * texel;
+    if (S3D_ALPHA_MASK && base.a < material.maps.z) {
+        discard;
+    }
+    if (material.emissive.w > 0.5) {
+        return vec4<f32>(0.0);
+    }
+    var n = normalize(in.normal);
+    if (S3D_NORMAL_MAPS && (flags & S3D_MAP_NORMAL) != 0u) {
+        let uvn = s3d_map_uv(S3D_MAP_NORMAL, in.uv, uv1);
+        let nt = s3d_sample_normal(uvn, in.layer);
+        let frame = s3d_tangent_frame(
+            n,
+            ext_tangent,
+            dpdx(in.world_pos),
+            dpdy(in.world_pos),
+            dpdx(uvn),
+            dpdy(uvn),
+        );
+        n = normalize(frame * s3d_normal_ts(nt));
+    }
+    if (!front) {
+        n = -n;
+    }
+    var metallic = material.params.x;
+    var roughness = material.params.y;
+    if ((flags & S3D_MAP_MR) != 0u) {
+        var mr = s3d_sample_mr(s3d_map_uv(S3D_MAP_MR, in.uv, uv1), in.layer).rgb;
+        if ((flags & S3D_FIXUP_MR) != 0u) {
+            mr = linear_to_srgb(mr);
+        }
+        roughness = roughness * mr.g;
+        metallic = metallic * mr.b;
+    }
+    let f0 = mix(vec3<f32>(0.04), base.rgb, metallic);
+    let f0_max = clamp(max(f0.r, max(f0.g, f0.b)), 0.04, 1.0);
+    return vec4<f32>(s3d_oct_encode(n), clamp(roughness, 0.0, 1.0), f0_max);
+}

@@ -360,6 +360,23 @@ impl Renderer {
             output: view.output,
         };
         let depth_1x = self.encode_view(encoder, i, view, first, &pass, replay);
+        if view.work & work::SCREEN_FX != 0
+            && let Some(pg) = self
+                .frame
+                .post_groups
+                .iter()
+                .position(|p| p.view == Some(i) && p.fx.any())
+        {
+            let n = self.frame.post_groups.len();
+            self.frame.post_depths.resize(n, None);
+            let offset = self.frame.view_infos[i].view_offset;
+            self.frame.post_depths[pg] = depth_1x.clone().map(|d| (d, view.bind_group, offset));
+            if self.frame.post_groups[pg].fx.ssr
+                && let Some(depth) = &depth_1x
+            {
+                self.encode_gbuffer(encoder, view, depth);
+            }
+        }
         if view.work & work::DISTORTION != 0
             && let Some(pg) = self
                 .frame
@@ -370,6 +387,66 @@ impl Renderer {
             self.encode_distortion(encoder, i, view.bind_group, pg, depth_1x.as_ref(), replay);
         }
         depth_1x
+    }
+
+    /// The SSR G-buffer-lite pass of a scene view (`PassKind::GBuffer`): its opaque draws again,
+    /// depth-tested read-only against the view's single-sample scene depth `depth`, writing
+    /// normal, roughness and F0 into the camera's G-buffer.
+    fn encode_gbuffer(&mut self, encoder: &mut wgpu::CommandEncoder, view: &ViewData, depth: &wgpu::TextureView) {
+        let camera = self.frame.cameras[view.camera].id;
+        let extent = extent(depth);
+        let target = {
+            let Renderer {
+                device,
+                queue,
+                layouts,
+                screen_fx,
+                frame_index,
+                stats,
+                ..
+            } = self;
+            let fx = screen_fx.get_or_insert_with(|| crate::post::ScreenFx::new(device, queue, layouts, *frame_index));
+            stats.target_bytes += 4 * extent.0 as u64 * extent.1 as u64;
+            fx.gbuffer_target(device, camera, extent)
+        };
+        let mut pass = encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("space3d ssr g-buffer"),
+                timestamp_writes: self.timer.render("gbuffer", Some(camera)),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                // Read-only: tested by hardware, never written.
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth,
+                    depth_ops: None,
+                    stencil_ops: None,
+                }),
+                ..Default::default()
+            })
+            .forget_lifetime();
+        if let Some(r) = view.rect {
+            pass.set_viewport(r.x as f32, r.y as f32, r.w as f32, r.h as f32, 0.0, 1.0);
+            let [x, y, w, h] = r.scissor(extent);
+            pass.set_scissor_rect(x, y, w, h);
+        }
+        self.encode_draws_as(
+            &mut pass,
+            view,
+            view.draws.start..view.opaque_end,
+            crate::post::GBUFFER_FORMAT,
+            1,
+            OutputEncoding::Linear,
+            crate::pipeline::PassKind::GBuffer,
+        );
+        drop(pass);
+        self.stats.render_passes += 1;
     }
 
     /// A display view of an intermediate group: drawn LDR, Direct-style, at 1 sample into `D`
@@ -478,15 +555,22 @@ impl Renderer {
                 .then(|| self.post.distortion_view(camera))
                 .flatten()
                 .map(|(view, _, _)| view);
+            // The city effects (fog, SSAO, SSR): S to S2, which the post chain then reads.
+            let scene_rect = pg.scene_rect.scissor(scene_size);
+            let fx_scene = self.encode_screen_fx(encoder, p, camera, (&scene, scene_format, scene_size), scene_rect);
+            let (scene, generation) = match &fx_scene {
+                Some((view, g)) => (view, *g),
+                None => (&scene, generation),
+            };
             let input = PostGroupInput {
                 camera,
                 settings: pg.settings,
                 mode,
                 scene_output: pg.scene_output,
-                scene: &scene,
+                scene,
                 scene_format,
                 scene_size,
-                scene_rect: pg.scene_rect.scissor(scene_size),
+                scene_rect,
                 scene_alpha: scene_format != wgpu::TextureFormat::Rg11b10Ufloat,
                 transparent,
                 depth: None,
@@ -522,6 +606,65 @@ impl Renderer {
                 self.encode_display_view(encoder, j, view, d, replay);
             }
         }
+    }
+
+    /// The city effects of post group `p` (settings camera `camera`) over its scene color `S`:
+    /// the pooled `S2` and its generation, or `None` when the group runs none (or lacks the
+    /// settings camera's depth, e.g. in a capture replay that did not re-render the scene).
+    fn encode_screen_fx(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        p: usize,
+        camera: space3d_core::Entity,
+        (scene, scene_format, scene_size): (&wgpu::TextureView, wgpu::TextureFormat, (u32, u32)),
+        rect: [u32; 4],
+    ) -> Option<(wgpu::TextureView, u64)> {
+        let pg = self.frame.post_groups[p];
+        if !pg.fx.any() {
+            return None;
+        }
+        let (depth, bind_group, view_offset) = self.frame.post_depths.get(p)?.clone()?;
+        let view_bind_group = self.frame.view_bind_group(bind_group)?.clone();
+        let Renderer {
+            device,
+            queue,
+            layouts,
+            screen_fx,
+            scene_inputs,
+            frame: f,
+            stats,
+            timer,
+            frame_index,
+            ..
+        } = self;
+        let fx = screen_fx.get_or_insert_with(|| crate::post::ScreenFx::new(device, queue, layouts, *frame_index));
+        let depth_bind_group = scene_inputs.with_depth(device, layouts, &depth).0.clone();
+        let mut plan = pg.fx;
+        plan.ssr &= fx.gbuffer(camera).is_some();
+        let mut cx = crate::post::FxEncode {
+            device,
+            queue,
+            encoder,
+            stats,
+            pool: &mut f.pool,
+            timing: timer,
+        };
+        fx.encode(
+            &mut cx,
+            &crate::post::FxInput {
+                camera,
+                settings: pg.settings,
+                plan,
+                scene,
+                scene_format,
+                scene_size,
+                rect,
+                view_bind_group: &view_bind_group,
+                view_offset,
+                depth_bind_group: &depth_bind_group,
+                frame: *frame_index,
+            },
+        )
     }
 
     /// Record one view's passes. `first`: no earlier pass of this frame drew into the view's
@@ -578,7 +721,7 @@ impl Renderer {
         let reading = w & work::READING != 0;
         let scene_read = reading && mode != ReadMode::InPass;
         let overlay_depth = self.overlays.hdr_scene_depth() && self.frame.hdr_scene_view == Some(i);
-        let wants_1x = scene_read || w & work::DISTORTION != 0 || overlay_depth;
+        let wants_1x = scene_read || w & (work::DISTORTION | work::SCREEN_FX) != 0 || overlay_depth;
         let resolve = p.samples > 1 && can_resolve && wants_1x;
         let store = scene_read || resolve || (p.samples <= 1 && wants_1x);
 

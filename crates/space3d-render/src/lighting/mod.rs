@@ -534,6 +534,9 @@ impl Lighting {
             let uploaded = self.states.iter().any(|s| s.handle == sky.cubemap && s.uploaded);
             view.sky_params = [sky.intensity, if uploaded { 1.0 } else { 0.0 }, 0.0, 0.0];
             view.sky_rotation = rotation_columns(sky.rotation);
+            if let Some((c, b)) = sky.ground {
+                view.sky_ground = [c.x, c.y, c.z, b.max(1e-4)];
+            }
         }
         if let Some(env) = self.camera_env(camera)
             && let Ok(light) = world.get::<&EnvironmentLight>(camera)
