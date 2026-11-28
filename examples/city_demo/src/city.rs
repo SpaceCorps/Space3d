@@ -74,6 +74,10 @@ pub struct ChunkMeshes {
     pub props_cold: MeshData,
     pub glow: MeshData,
     pub puddle: MeshData,
+    /// Parked cars: position, yaw, seed.
+    pub parked: Vec<(Vec3, f32, u32)>,
+    /// Street props (0 hydrant, 1 bin, 2 bench): kind, position, yaw.
+    pub props: Vec<(u8, Vec3, f32)>,
 }
 
 #[derive(Default)]
@@ -86,6 +90,8 @@ struct ChunkBuild {
     props_cold: MeshBuilder,
     glow: MeshBuilder,
     puddle: MeshBuilder,
+    parked: Vec<(Vec3, f32, u32)>,
+    props: Vec<(u8, Vec3, f32)>,
 }
 
 impl ChunkBuild {
@@ -100,6 +106,8 @@ impl ChunkBuild {
             props_cold: self.props_cold.finish(),
             glow: self.glow.finish(),
             puddle: self.puddle.finish(),
+            parked: self.parked,
+            props: self.props,
         }
     }
 }
@@ -211,7 +219,7 @@ fn ground_mesh() -> MeshData {
         }
     }
     // far ground out to the horizon
-    let far = 6000.0;
+    let far = 28000.0;
     for (a, bb) in [
         ((-far, -far), (far, -half)),
         ((-far, half), (far, far)),
@@ -1174,6 +1182,23 @@ fn street_furniture(ch: &mut ChunkBuild, lights: &mut Vec<LightSpot>, rng: &mut 
                 Vec4::new(1.0, 0.6, 0.28, 1.0) * 0.55,
             );
         }
+        // hydrants, bins and benches face the road
+        let yaw = dir.x.atan2(dir.z);
+        let spot = |rng: &mut Rng, lo: f32| {
+            Vec3::new(c.x, KERB_H, c.y) + dir * rng.range(CURB - 3.2, CURB - 1.0) + along * rng.range(lo, lo + 8.0)
+        };
+        if rng.chance(0.5) {
+            let p = spot(rng, -22.0);
+            ch.props.push((0, p, yaw));
+        }
+        if rng.chance(0.6) {
+            let p = spot(rng, 0.0);
+            ch.props.push((1, p, yaw));
+        }
+        if rng.chance(0.35) {
+            let p = spot(rng, 8.0);
+            ch.props.push((2, p, yaw));
+        }
         // street trees and pedestrians on the pavement
         for off in [-21.0f32, -4.0, 3.0, 20.0] {
             if rng.chance(0.75) {
@@ -1191,13 +1216,9 @@ fn street_furniture(ch: &mut ChunkBuild, lights: &mut Vec<LightSpot>, rng: &mut 
         for k in 0..n {
             let t = -22.0 + k as f32 * 9.5 + rng.range(-1.0, 1.0);
             let pos = Vec3::new(c.x, 0.0, c.y) + dir * (CURB + 1.15) + along * t;
-            let paint = props::PAINTS[rng.int(8) as usize];
             // cars face along the curb, a random way
             let fwd = if rng.chance(0.5) { along } else { -along };
-            let rot = Quat::from_rotation_arc(Vec3::Z, fwd);
-            ch.props_cold.xform = Mat4::from_rotation_translation(rot, pos);
-            props::add_sedan(&mut ch.props_cold, paint, false);
-            ch.props_cold.xform = Mat4::IDENTITY;
+            ch.parked.push((pos, fwd.x.atan2(fwd.z), rng.int(1000)));
         }
     }
 }

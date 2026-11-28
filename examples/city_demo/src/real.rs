@@ -135,3 +135,91 @@ pub fn roof(low: bool) -> Option<TextureSet> {
     let (d, a, n) = set!("bitumen");
     surface(d, a, n, low, 0.7, 0.85)
 }
+
+// ----------------------------------------------------------------------------------------------
+// Models (GLB)
+// ----------------------------------------------------------------------------------------------
+
+use space3d::assets::loaders::load_gltf;
+use space3d::assets::render::{ModelUploadOptions, PreparedModel, prepare_model};
+
+/// One vehicle model: size in model units (before `scale`) and how common it is.
+pub struct CarModel {
+    pub model: PreparedModel,
+    pub half_len: f32,
+    pub half_w: f32,
+    pub scale: f32,
+    pub weight: u32,
+}
+
+pub struct Models {
+    pub cars: Vec<CarModel>,
+    pub hydrant: Option<PreparedModel>,
+    pub trash: Option<PreparedModel>,
+    pub bench: Option<PreparedModel>,
+}
+
+fn prepared(bytes: &[u8], name: &str) -> Option<PreparedModel> {
+    match load_gltf(bytes, &LoadContext::new(name), true) {
+        Ok(m) => Some(prepare_model(&m, &ModelUploadOptions::default())),
+        Err(e) => {
+            eprintln!("city_demo: {name}: {e}");
+            None
+        }
+    }
+}
+
+macro_rules! car {
+    ($name:literal, $half_len:expr, $half_w:expr, $scale:expr, $weight:expr) => {
+        (
+            $name,
+            include_bytes!(concat!("../assets/models/kenney_", $name, ".glb")).as_slice(),
+            $half_len,
+            $half_w,
+            $scale,
+            $weight,
+        )
+    };
+}
+
+pub fn models() -> Models {
+    let list = [
+        car!("sedan", 1.3, 0.75, 1.3, 4),
+        car!("sedan-sports", 1.3, 0.65, 1.3, 1),
+        car!("hatchback-sports", 1.45, 0.65, 1.3, 2),
+        car!("taxi", 1.4, 0.75, 1.3, 3),
+        car!("suv", 1.35, 0.75, 1.32, 3),
+        car!("suv-luxury", 1.45, 0.75, 1.32, 1),
+        car!("van", 1.4, 0.75, 1.38, 1),
+        car!("delivery", 1.65, 0.75, 1.5, 1),
+        car!("truck", 1.5, 0.75, 1.5, 1),
+        car!("police", 1.57, 0.75, 1.3, 1),
+    ];
+    let cars = list
+        .into_iter()
+        .filter_map(|(name, bytes, half_len, half_w, scale, weight)| {
+            Some(CarModel {
+                model: prepared(bytes, name)?,
+                half_len,
+                half_w,
+                scale,
+                weight,
+            })
+        })
+        .collect();
+    Models {
+        cars,
+        hydrant: prepared(
+            include_bytes!("../assets/models/polyhaven_fire_hydrant.glb"),
+            "hydrant.glb",
+        ),
+        trash: prepared(
+            include_bytes!("../assets/models/polyhaven_metal_trash_can.glb"),
+            "trash.glb",
+        ),
+        bench: prepared(
+            include_bytes!("../assets/models/polyhaven_painted_wooden_bench.glb"),
+            "bench.glb",
+        ),
+    }
+}

@@ -29,7 +29,9 @@ mod props;
 mod real;
 
 use city::{CityData, LightSpot};
+use mesh::MeshBuilder;
 use procgen::{Facade, TextureSet};
+use space3d::assets::render::{RenderModel, spawn_model};
 use space3d::particles::prelude::*;
 use space3d::prelude::*;
 use space3d::render::{
@@ -69,6 +71,8 @@ struct Loading {
     tex_a: Option<Task<Textures>>,
     tex_b: Option<Task<Textures>>,
     rest: Option<Task<Rest>>,
+    models: Option<Task<real::Models>>,
+    got_models: Option<real::Models>,
     city: Option<Task<CityData>>,
     got_sky: Option<real::Sky>,
     got_a: Option<Textures>,
@@ -86,7 +90,8 @@ struct Car {
     lane: f32,
     base: f32,
     speed: f32,
-    bus: bool,
+    /// Half the vehicle's length in meters.
+    half_len: f32,
 }
 
 struct Slot {
@@ -290,10 +295,11 @@ fn setup(ctx: &mut SystemCtx) {
     let post = if knob("CITY_EFFECTS", 1.0) > 0.5 {
         post.with_fog(Fog {
             enabled: true,
-            color: Vec3::new(0.40, 0.42, 0.56),
+            color: Vec3::new(0.52, 0.46, 0.55),
             density: knob("CITY_FOG", 0.0007),
             height_falloff: 0.012,
-            sky_amount: 0.4,
+            sky_amount: 0.95,
+            sky_falloff: 7.0,
             sun_color: Vec3::new(1.0, 0.6, 0.3),
             sun_intensity: 1.3,
             sun_exponent: 8.0,
@@ -313,7 +319,7 @@ fn setup(ctx: &mut SystemCtx) {
             .with_projection(Projection::Perspective {
                 fov_y: knob("CITY_FOV", 46.0).to_radians(),
                 near: 0.3,
-                far: 6000.0,
+                far: 30000.0,
             }),
         post,
     ));
@@ -381,6 +387,7 @@ fn choose_quality(ctx: &mut SystemCtx) {
         tex_b: Some(space3d::tasks::spawn_compute(move || {
             facades([Facade::Glass, Facade::Stone])
         })),
+        models: Some(space3d::tasks::spawn_compute(real::models)),
         rest: Some(space3d::tasks::spawn_compute(move || Rest {
             shop: procgen::shop_textures(5),
             asphalt: real::asphalt(low).unwrap_or_else(|| procgen::asphalt_textures(21)),
@@ -414,8 +421,15 @@ fn load_content(ctx: &mut SystemCtx) {
     poll_into!(l, tex_a, got_a);
     poll_into!(l, tex_b, got_b);
     poll_into!(l, rest, got_rest);
+    poll_into!(l, models, got_models);
     poll_into!(l, city, got_city);
-    if l.got_sky.is_some() && l.got_a.is_some() && l.got_b.is_some() && l.got_rest.is_some() && l.got_city.is_some() {
+    if l.got_sky.is_some()
+        && l.got_a.is_some()
+        && l.got_b.is_some()
+        && l.got_rest.is_some()
+        && l.got_models.is_some()
+        && l.got_city.is_some()
+    {
         let l = d.loading.take().unwrap();
         dress(ctx, l);
     }
@@ -456,6 +470,7 @@ fn spawn_mesh(world: &mut World, assets: &mut RenderAssets, data: MeshData, mate
 
 /// Register the generated content and spawn the city.
 fn dress(ctx: &mut SystemCtx, l: Loading) {
+    let models = l.got_models.unwrap();
     let (sky, a, b, rest, city) = (
         l.got_sky.unwrap(),
         l.got_a.unwrap(),
@@ -503,7 +518,11 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
 
     let puddle_mat = Material::color(Vec4::new(0.012, 0.014, 0.018, 1.0)).with_metallic_roughness(0.0, 0.03);
     spawn_mesh(ctx.world, assets, city.ground, &road_mat);
+    let mut parked = Vec::new();
+    let mut street_props = Vec::new();
     for chunk in city.chunks {
+        parked.extend(chunk.parked);
+        street_props.extend(chunk.props);
         for (i, f) in chunk.facade.into_iter().enumerate() {
             spawn_mesh(ctx.world, assets, f, facade_mats[i].as_ref().unwrap());
         }
@@ -517,6 +536,45 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
     }
     let vehicle_handles: Vec<MeshHandle> = city.vehicles.into_iter().map(|m| assets.add_mesh(m)).collect();
 
+    // Vehicles: the CC0 models (the renderer instances their parts), the procedural cars where
+    // a model did not load.
+    struct CarAsset {
+        model: RenderModel,
+        half_len: f32,
+        scale: f32,
+        weight: u32,
+        lights: MeshHandle,
+    }
+    let mut car_assets: Vec<CarAsset> = Vec::new();
+    for m in models.cars {
+        let mut rm = m.model.upload(assets);
+        for part in &mut rm.parts {
+            let wheel = part.name.as_deref().is_some_and(|n| n.contains("wheel"));
+            part.material.roughness = if wheel { 0.75 } else { 0.28 };
+            part.material.metallic = if wheel { 0.0 } else { 0.25 };
+        }
+        let mut lb = MeshBuilder::new();
+        props::add_car_lights(&mut lb, m.half_w, m.half_len, 0.45);
+        car_assets.push(CarAsset {
+            model: rm,
+            half_len: m.half_len * m.scale,
+            scale: m.scale,
+            weight: m.weight,
+            lights: assets.add_mesh(lb.finish()),
+        });
+    }
+    let total_weight: u32 = car_assets.iter().map(|c| c.weight).sum();
+    let pick = |r: &mut city::Rng| {
+        let mut x = r.int(total_weight.max(1));
+        for (i, c) in car_assets.iter().enumerate() {
+            if x < c.weight {
+                return i;
+            }
+            x -= c.weight;
+        }
+        0
+    };
+
     // Traffic on the streets around the center.
     let mut cars = Vec::new();
     let mut rng = city::Rng::new(4242);
@@ -529,14 +587,27 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
                     let n = if s == 8 { 7 } else { 4 };
                     for k in 0..n {
                         let bus = rng.chance(0.07);
-                        let variant = if bus {
-                            vehicle_handles.len() - 1
+                        let (entity, half_len) = if bus || car_assets.is_empty() {
+                            let variant = if bus {
+                                vehicle_handles.len() - 1
+                            } else {
+                                rng.int(vehicle_handles.len() as u32 - 1) as usize
+                            };
+                            let e =
+                                ctx.world
+                                    .spawn((Transform::IDENTITY, Mesh3d(vehicle_handles[variant]), hot.clone()));
+                            (e, if bus { 5.5 } else { 2.2 })
                         } else {
-                            rng.int(vehicle_handles.len() as u32 - 1) as usize
-                        };
-                        let entity =
+                            let a = &car_assets[pick(&mut rng)];
+                            let e = spawn_model(
+                                ctx.world,
+                                &a.model,
+                                Transform::IDENTITY.with_scale(Vec3::splat(a.scale)),
+                            );
                             ctx.world
-                                .spawn((Transform::IDENTITY, Mesh3d(vehicle_handles[variant]), hot.clone()));
+                                .spawn((Transform::IDENTITY, Mesh3d(a.lights), hot.clone(), Parent(e)));
+                            (e, a.half_len)
+                        };
                         cars.push(Car {
                             entity,
                             along_z,
@@ -545,12 +616,50 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
                             lane,
                             base: -span * 0.5 + span / n as f32 * k as f32 + rng.range(-12.0, 12.0),
                             speed,
-                            bus,
+                            half_len,
                         });
                     }
                 }
             }
         }
+    }
+    // Parked cars (no lights on).
+    for (pos, yaw, seed) in parked.into_iter().take(1500) {
+        let rot = Quat::from_rotation_y(yaw);
+        if car_assets.is_empty() {
+            let h = vehicle_handles[seed as usize % (vehicle_handles.len() - 1)];
+            ctx.world.spawn((
+                Transform::from_xyz(pos.x, pos.y, pos.z).with_rotation(rot),
+                Mesh3d(h),
+                cold.clone(),
+            ));
+        } else {
+            let a = &car_assets[seed as usize % car_assets.len()];
+            let t = Transform::from_xyz(pos.x, pos.y, pos.z)
+                .with_rotation(rot)
+                .with_scale(Vec3::splat(a.scale));
+            spawn_model(ctx.world, &a.model, t);
+        }
+    }
+    // Hydrants, bins and benches (high-detail scans: only near the flythrough).
+    let path: Vec<Vec3> = (0..flight::duration() as i32)
+        .map(|t| flight::sample(t as f32).0)
+        .collect();
+    let near_path = |p: Vec3| path.iter().any(|q| q.distance_squared(p) < 70.0 * 70.0);
+    let prop_models = [models.hydrant, models.trash, models.bench].map(|m| m.map(|m| m.upload(assets)));
+    let mut counts = [0u32; 3];
+    let caps = [150, 150, 100];
+    for (kind, pos, yaw) in street_props {
+        let k = kind as usize;
+        let Some(model) = &prop_models[k] else {
+            continue;
+        };
+        if counts[k] >= caps[k] || !near_path(pos) {
+            continue;
+        }
+        counts[k] += 1;
+        let t = Transform::from_xyz(pos.x, pos.y, pos.z).with_rotation(Quat::from_rotation_y(yaw));
+        spawn_model(ctx.world, model, t);
     }
 
     // Particle effects: steam on the streets and roofs, drizzle and mist around the camera.
@@ -679,7 +788,7 @@ fn street_lights(ctx: &mut SystemCtx) {
             continue;
         }
         let fwd = Vec3::new(yaw.sin(), 0.0, yaw.cos());
-        let head = p + fwd * if c.bus { 7.5 } else { 4.2 } + Vec3::Y * 0.8;
+        let head = p + fwd * (c.half_len + 1.8) + Vec3::Y * 0.8;
         cands.push((
             1_000_000 + i as u32,
             head.distance_squared(cam_pos),
@@ -690,7 +799,7 @@ fn street_lights(ctx: &mut SystemCtx) {
                 range: 17.0,
             },
         ));
-        let tail = p - fwd * if c.bus { 6.0 } else { 2.6 } + Vec3::Y * 0.7;
+        let tail = p - fwd * (c.half_len + 0.6) + Vec3::Y * 0.7;
         cands.push((
             2_000_000 + i as u32,
             tail.distance_squared(cam_pos) + 400.0,

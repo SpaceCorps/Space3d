@@ -207,3 +207,24 @@ pub fn add_signal_head(b: &mut MeshBuilder, p: Vec3, face: Vec3, state: u32) -> 
     }
     Vec3::new(center.x, center.y + 0.36 - 0.36 * state as f32, center.z) + face * 0.3
 }
+
+/// Head and tail lights for a vehicle model (model units, facing +Z): the glowing parts the
+/// glTF's flat-colored faces cannot be.
+pub fn add_car_lights(b: &mut MeshBuilder, half_w: f32, half_len: f32, y: f32) {
+    for side in [-1.0f32, 1.0] {
+        let x = side * half_w * 0.62;
+        let (lo, hi) = (x - 0.12, x + 0.12);
+        b.box_cell(
+            Vec3::new(lo, y, half_len - 0.02),
+            Vec3::new(hi, y + 0.09, half_len + 0.03),
+            cell::HEADLIGHT,
+            WHITE,
+        );
+        b.box_cell(
+            Vec3::new(lo, y + 0.03, -half_len - 0.03),
+            Vec3::new(hi, y + 0.11, -half_len + 0.02),
+            cell::RED,
+            WHITE,
+        );
+    }
+}
