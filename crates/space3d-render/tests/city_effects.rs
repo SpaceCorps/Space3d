@@ -386,3 +386,58 @@ fn effects_work_with_msaa_depth_resolve() {
         "fogged through the resolved depth: {m}"
     );
 }
+
+fn solid_faces(rgba: [u8; 4]) -> [ImageData; 6] {
+    std::array::from_fn(|_| ImageData::filled(8, 8, rgba))
+}
+
+#[test]
+fn skybox_ground_replaces_the_lower_hemisphere() {
+    let Some(mut app) = headless_app(W, H) else { return };
+    let sky = app
+        .resources
+        .expect_mut::<RenderAssets>()
+        .add_cubemap(CubemapSource::from_faces(solid_faces([255, 0, 0, 255])).unwrap());
+    // Looking level at the horizon: sky above the middle row, ground below.
+    let cam = camera(&mut app, Vec3::ZERO, Vec3::new(0.0, 0.0, -1.0), plain());
+    app.world.insert_one(cam, Skybox::new(sky)).unwrap();
+    let plain_sky = render(&mut app);
+    let (top, bottom) = (lin(&plain_sky, W / 2, 8), lin(&plain_sky, W / 2, H - 8));
+    assert!(top.x > 0.9 && bottom.x > 0.9, "the cubemap all around: {top} {bottom}");
+    app.world
+        .insert_one(cam, Skybox::new(sky).with_ground(Vec3::new(0.0, 1.0, 0.0), 0.05))
+        .unwrap();
+    let grounded = render(&mut app);
+    let (top, bottom) = (lin(&grounded, W / 2, 8), lin(&grounded, W / 2, H - 8));
+    assert!(top.x > 0.9 && top.y < 0.05, "sky above the horizon is untouched: {top}");
+    assert!(bottom.y > 0.9 && bottom.x < 0.05, "ground color below it: {bottom}");
+    // The blend is soft: the rows around the horizon are in between.
+    let mid = lin(&grounded, W / 2, H / 2);
+    assert!(mid.x > 0.05 && mid.y > 0.05, "blended at the horizon: {mid}");
+}
+
+#[test]
+fn tiled_meshes_keep_their_texture_scale() {
+    // A 6 x 3 x 2 box with 2 m tiles: the +Z face (6 x 3 units) spans 3 x 1.5 tiles.
+    let m = MeshData::cuboid_tiled(Vec3::new(6.0, 3.0, 2.0), 2.0);
+    let front: Vec<[f32; 2]> = m
+        .normals
+        .iter()
+        .zip(&m.uvs)
+        .filter(|(n, _)| n[2] > 0.5)
+        .map(|(_, uv)| *uv)
+        .collect();
+    let max_u = front.iter().map(|uv| uv[0]).fold(0.0, f32::max);
+    let max_v = front.iter().map(|uv| uv[1]).fold(0.0, f32::max);
+    assert!(
+        (max_u - 3.0).abs() < 1e-5 && (max_v - 1.5).abs() < 1e-5,
+        "{max_u} {max_v}"
+    );
+    assert!((m.positions.iter().map(|p| p[0]).fold(0.0, f32::max) - 3.0).abs() < 1e-6);
+    assert_eq!(
+        Material::default().with_tiling(4.0, 2.0).uv_transform.scale,
+        Vec2::new(4.0, 2.0)
+    );
+    let p = MeshData::plane_tiled(10.0, 2.0);
+    assert!(p.uvs.iter().all(|uv| uv[0] <= 5.0 && uv[1] <= 5.0) && p.uvs.iter().any(|uv| uv[0] == 5.0));
+}

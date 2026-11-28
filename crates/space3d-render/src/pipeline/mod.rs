@@ -1241,7 +1241,7 @@ mod tests {
             std::mem::size_of::<GpuView>(),
             64 + 16 * 3 + 32 * (MAX_DIR_LIGHTS + MAX_POINT_LIGHTS) + 560 + 64
         );
-        assert_eq!(std::mem::size_of::<GpuView>(), 1376);
+        assert_eq!(std::mem::size_of::<GpuView>(), 1392);
         assert_eq!(std::mem::size_of::<GpuMaterial>(), 112);
         assert_eq!(std::mem::size_of::<GpuCullParams>(), 32);
         assert_eq!(std::mem::size_of::<GpuFrustum>(), 112);
@@ -1292,6 +1292,7 @@ mod tests {
             ("sky_rotation", offset_of!(GpuView, sky_rotation)),
             ("sky_params", offset_of!(GpuView, sky_params)),
             ("inv_proj_rot", offset_of!(GpuView, inv_proj_rot)),
+            ("sky_ground", offset_of!(GpuView, sky_ground)),
         ];
         assert_eq!(members.len(), rust.len(), "every WGSL member has a Rust field");
         for (member, (name, offset)) in members.iter().zip(rust) {

@@ -111,6 +111,11 @@ pub struct Skybox {
     pub intensity: f32,
     /// Rotation of the sky.
     pub rotation: glam::Quat,
+    /// Lower-hemisphere control: `(linear color, blend half-width)`. The sky below the horizon
+    /// (view direction Y < 0, world up) is replaced by the color, blended over
+    /// `-blend..blend` of the direction's Y so a ground plane meets the sky without a seam.
+    /// `None` = the cubemap all around (default; identical to before).
+    pub ground: Option<(glam::Vec3, f32)>,
 }
 
 impl Skybox {
@@ -120,7 +125,14 @@ impl Skybox {
             cubemap,
             intensity: 1.0,
             rotation: glam::Quat::IDENTITY,
+            ground: None,
         }
+    }
+    /// Set [`Self::ground`]: sky color below the horizon, `blend_height` the half-width of the
+    /// blend in the view direction's Y (0.05 is a soft horizon; match the fog color to hide it).
+    pub fn with_ground(mut self, color: glam::Vec3, blend_height: f32) -> Self {
+        self.ground = Some((color, blend_height));
+        self
     }
     /// Set [`Self::intensity`].
     pub fn with_intensity(mut self, i: f32) -> Self {

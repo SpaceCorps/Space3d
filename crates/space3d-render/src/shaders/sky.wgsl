@@ -41,6 +41,10 @@ fn fs_sky(in: SkyOut) -> @location(0) vec4<f32> {
     let far = view.inv_proj_rot * vec4<f32>(in.ndc, 1.0, 1.0);
     let dir = far.xyz / far.w - near.xyz / near.w;
     let d = view.sky_rotation * dir;
-    let c = textureSample(s3d_sky_cube, s3d_sky_sampler, d).rgb * view.sky_params.x;
+    var c = textureSample(s3d_sky_cube, s3d_sky_sampler, d).rgb * view.sky_params.x;
+    if (view.sky_ground.w > 0.0) {
+        let w = 1.0 - smoothstep(-view.sky_ground.w, view.sky_ground.w, normalize(dir).y);
+        c = mix(c, view.sky_ground.rgb, w);
+    }
     return s3d_output(vec4<f32>(c, 1.0), S3D_OUTPUT, view.exposure.x, view.output.y);
 }

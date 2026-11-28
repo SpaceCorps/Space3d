@@ -47,7 +47,15 @@ fn build(app: &mut App, post: PostProcess) -> Entity {
     app.world.spawn((
         Transform::from_xyz(0.0, 0.0, 0.0),
         Mesh3d(plane),
-        Material::color(Vec4::new(0.05, 0.05, 0.055, 1.0)).with_metallic_roughness(0.0, 0.12),
+        Material::color(Vec4::new(0.05, 0.05, 0.055, 1.0)).with_metallic_roughness(0.0, 0.25),
+    ));
+    // A window-grid texture tiled at real-world scale: `cuboid_tiled` UVs are in 4 m tiles,
+    // `with_tiling(2, 2)` repeats the 256 px texture every 2 m on every facade, whatever its size.
+    let grid = app.resources.expect_mut::<RenderAssets>().add_image(ImageData::checker(
+        256,
+        32,
+        [200, 196, 188, 255],
+        [70, 80, 96, 255],
     ));
     // Two rows of buildings along a street (x = +-7).
     for i in 0..9 {
@@ -55,10 +63,32 @@ fn build(app: &mut App, post: PostProcess) -> Entity {
         for (side, shade) in [(-1.0f32, 0.0f32), (1.0, 0.12)] {
             let height = 6.0 + ((i * 7 + side as i32 * 3).rem_euclid(5)) as f32 * 3.0;
             let tone = 0.35 + shade + 0.04 * (i % 3) as f32;
+            let size = Vec3::new(6.0, height, 5.5);
+            // Baked AO in the vertex colors: darker toward the street level.
+            let mut data = MeshData::cuboid_tiled(size, 4.0);
+            data.colors = data
+                .positions
+                .iter()
+                .map(|p| {
+                    let k = ((p[1] + size.y * 0.5) / 8.0).clamp(0.0, 1.0);
+                    let v = 0.45 + 0.55 * k;
+                    [v, v, v, 1.0]
+                })
+                .collect();
+            let mesh = app.resources.expect_mut::<RenderAssets>().add_mesh(data);
             app.world.spawn((
-                Transform::from_xyz(side * 9.5, height * 0.5, z).with_scale(Vec3::new(6.0, height, 5.5)),
-                Mesh3d(cube),
-                Material::color(Vec4::new(tone, tone * 0.95, tone * 0.9, 1.0)).with_metallic_roughness(0.0, 0.85),
+                Transform::from_xyz(side * 9.5, height * 0.5, z),
+                Mesh3d(mesh),
+                Material::color(Vec4::new(tone, tone * 0.95, tone * 0.9, 1.0))
+                    .with_texture(grid)
+                    .with_tiling(2.0, 2.0)
+                    .with_metallic_roughness(0.0, 0.85),
+            ));
+            // A street lamp: a hot emissive bulb above the sidewalk.
+            app.world.spawn((
+                Transform::from_xyz(side * 5.2, 4.5, z).with_scale(Vec3::splat(0.25)),
+                Mesh3d(sphere),
+                Material::unlit(Vec4::new(24.0, 18.0, 10.0, 1.0)),
             ));
         }
     }
@@ -89,7 +119,7 @@ fn build(app: &mut App, post: PostProcess) -> Entity {
         Transform::from_xyz(0.0, 2.2, 14.0).looking_at(Vec3::new(0.0, 3.0, -20.0), Vec3::Y),
         Camera3d::default().with_clear_color(Vec4::new(0.5, 0.65, 0.95, 1.0)),
         post,
-        Skybox::new(sky),
+        Skybox::new(sky).with_ground(Vec3::new(0.60, 0.70, 0.82) * 0.9, 0.08),
         EnvironmentLight::new(sky),
     ))
 }
@@ -107,6 +137,8 @@ fn main() {
         eprintln!("no GPU adapter available");
         return;
     }
+    // GPU timings (when the device has timestamp queries): rendered a few frames per variant.
+    app.insert_resource(FrameSettings::default().with_gpu_timing(true));
     let camera = build(&mut app, PostProcess::default().with_fxaa(FxaaQuality::Medium));
     let fog = Fog::city_haze().with_density(0.012).with_height(0.0, 0.06);
     let variants = [
@@ -124,7 +156,25 @@ fn main() {
     ];
     for (name, post) in variants {
         *app.world.get::<&mut PostProcess>(camera).expect("camera post") = post.with_fxaa(FxaaQuality::Medium);
+        for _ in 0..8 {
+            render_to_image(&mut app).expect("capture");
+        }
         let img = render_to_image(&mut app).expect("capture");
+        let timings = app.resources.expect::<GpuTimings>().clone();
+        if timings.supported {
+            let ms = |l: &str| timings.scope_ms(l);
+            println!(
+                "{name}: gpu ms  scene {:.3}  gbuffer {:.3}  ssao {:.3}  ssao_blur {:.3}  ssr {:.3}  ssr_blur {:.3}  apply {:.3}  bloom+composite {:.3}",
+                ms("scene"),
+                ms("gbuffer"),
+                ms("post.ssao"),
+                ms("post.ssao_blur"),
+                ms("post.ssr"),
+                ms("post.ssr_blur"),
+                ms("post.screenfx"),
+                ms("post.bloom") + ms("post.composite"),
+            );
+        }
         let stats = app.resources.expect::<RenderStats>();
         println!(
             "{name}: passes {} screen_fx_passes {} target_bytes {}",
