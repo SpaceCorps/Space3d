@@ -58,7 +58,18 @@ pub struct PostProcess {
     /// the one without it (a uniform bit; no pipeline is built when it moves). CPU mirror:
     /// [`apply_display_gamma`].
     pub display_gamma: f32,
+    /// Height/distance fog on the HDR scene, before bloom (needs scene depth; Hdr mode only).
+    /// Default off.
+    pub fog: Fog,
+    /// Screen-space ambient occlusion on the HDR scene (needs scene depth; Hdr mode only).
+    /// Default off.
+    pub ssao: Ssao,
+    /// Screen-space reflections on the HDR scene (needs scene depth and a G-buffer-lite pass;
+    /// Hdr mode on devices with read-only depth only). Default off.
+    pub ssr: Ssr,
 }
+
+pub use super::city::{Fog, Ssao, Ssr};
 
 /// The range [`PostProcess::display_gamma`] is clamped to (NaN and infinities count as 1).
 /// At any value but 1 the display color is clamped to 0..1 before the power, so a float output
@@ -83,6 +94,9 @@ impl Default for PostProcess {
             color_grading: ColorGrading::default(),
             dither: true,
             display_gamma: 1.0,
+            fog: Fog::default(),
+            ssao: Ssao::default(),
+            ssr: Ssr::default(),
         }
     }
 }
@@ -214,6 +228,40 @@ impl PostProcess {
     pub fn with_color_grading(mut self, g: ColorGrading) -> Self {
         self.color_grading = g;
         self
+    }
+    /// Set [`Self::fog`].
+    pub fn with_fog(mut self, f: Fog) -> Self {
+        self.fog = f;
+        self
+    }
+    /// Set [`Self::ssao`].
+    pub fn with_ssao(mut self, s: Ssao) -> Self {
+        self.ssao = s;
+        self
+    }
+    /// Set [`Self::ssr`].
+    pub fn with_ssr(mut self, s: Ssr) -> Self {
+        self.ssr = s;
+        self
+    }
+    /// Disable fog.
+    pub fn without_fog(mut self) -> Self {
+        self.fog.enabled = false;
+        self
+    }
+    /// Disable SSAO.
+    pub fn without_ssao(mut self) -> Self {
+        self.ssao.enabled = false;
+        self
+    }
+    /// Disable SSR.
+    pub fn without_ssr(mut self) -> Self {
+        self.ssr.enabled = false;
+        self
+    }
+    /// Whether fog, SSAO or SSR is enabled (the camera then needs the scene depth).
+    pub fn screen_effects(&self) -> bool {
+        self.fog.enabled || self.ssao.enabled || self.ssr.enabled
     }
     /// Grade through a 3D LUT.
     pub fn with_lut(mut self, lut: ColorLut) -> Self {

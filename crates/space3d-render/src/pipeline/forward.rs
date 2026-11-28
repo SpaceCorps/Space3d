@@ -576,6 +576,7 @@ impl Pipelines {
         let (_, kinds, ext, _, _) = module_key;
         let ext_attrs = ext_attributes(ext_location(layout));
         let mode = BlendMode::from_class(key.class);
+        let gbuffer = key.pass == super::PassKind::GBuffer;
         // (Transparent classes without mode bits are the legacy alpha-blended class.)
         let blend = if key.class & CLASS_BLEND != 0 {
             mode.blend_state().or(Some(wgpu::BlendState::ALPHA_BLENDING))
@@ -621,8 +622,12 @@ impl Pipelines {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
-                depth_write_enabled: Some(blend.is_none()),
-                depth_compare: Some(wgpu::CompareFunction::Less),
+                depth_write_enabled: Some(blend.is_none() && !gbuffer),
+                depth_compare: Some(if gbuffer {
+                    wgpu::CompareFunction::LessEqual
+                } else {
+                    wgpu::CompareFunction::Less
+                }),
                 stencil: Default::default(),
                 bias: Default::default(),
             }),
@@ -633,7 +638,7 @@ impl Pipelines {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &module,
-                entry_point: Some("fs_main"),
+                entry_point: Some(if gbuffer { "fs_gbuffer" } else { "fs_main" }),
                 compilation_options: wgpu::PipelineCompilationOptions {
                     constants: &constants[..n],
                     ..Default::default()

@@ -269,6 +269,21 @@ impl Renderer {
         samples: u32,
         output: OutputEncoding,
     ) {
+        self.encode_draws_as(pass, view, range, format, samples, output, PassKind::Forward);
+    }
+
+    /// [`Self::encode_draws`] with the pipelines of another pass kind (the SSR G-buffer pass).
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn encode_draws_as(
+        &mut self,
+        pass: &mut wgpu::RenderPass<'_>,
+        view: &ViewData,
+        range: std::ops::Range<usize>,
+        format: wgpu::TextureFormat,
+        samples: u32,
+        output: OutputEncoding,
+        pass_kind: PassKind,
+    ) {
         let f = &self.frame;
         let (Some((vb, ib)), Some(view_bg)) = (&f.arena_buffers, f.view_bind_group(view.bind_group)) else {
             return;
@@ -330,7 +345,7 @@ impl Renderer {
                     output,
                     kinds,
                     shader: cmd.shader,
-                    pass: PassKind::Forward,
+                    pass: pass_kind,
                     globals,
                 };
                 pass.set_pipeline(self.pipelines.forward(&self.device, key));
