@@ -610,6 +610,8 @@ impl PostProcessRepr {
             color_grading: self.color_grading.value(),
             dither: self.dither,
             display_gamma: self.display_gamma,
+            // Fog, SSAO and SSR are not editable here yet (city effects): they keep their defaults.
+            ..PostProcess::default()
         }
     }
 }
