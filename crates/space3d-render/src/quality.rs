@@ -431,6 +431,7 @@ mod tests {
     #[test]
     fn city_effects_follow_the_tier_and_stay_lossless() {
         use crate::post::api::{Fog, Ssao, Ssr};
+        use GraphicsQuality as Q;
         let authored = PostProcess::default()
             .with_fog(Fog::city_haze())
             .with_ssao(Ssao::on().with_quality(4, 12))
