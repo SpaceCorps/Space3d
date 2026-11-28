@@ -24,6 +24,7 @@ mod city;
 mod effects;
 mod flight;
 mod mesh;
+mod people;
 mod procgen;
 mod props;
 mod real;
@@ -82,6 +83,15 @@ struct Loading {
     got_city: Option<CityData>,
 }
 
+/// A pedestrian entity and the path it paces.
+struct Pedestrian {
+    entity: Entity,
+    walker: people::Walker,
+    /// The two stride meshes of its outfit.
+    meshes: [MeshHandle; 2],
+    parity: usize,
+}
+
 struct Car {
     entity: Entity,
     along_z: bool,
@@ -126,6 +136,7 @@ struct Demo {
     pos: Vec3,
     spots: Vec<LightSpot>,
     cars: Vec<Car>,
+    walkers: Vec<Pedestrian>,
     slots: Vec<Slot>,
     hud: bool,
     shots: Option<Shots>,
@@ -192,6 +203,7 @@ fn add_game(app: &mut App, headless: bool) {
         pos: Vec3::ZERO,
         spots: Vec::new(),
         cars: Vec::new(),
+        walkers: Vec::new(),
         slots: Vec::new(),
         hud: !headless,
         shots: shots_from_env(),
@@ -203,6 +215,7 @@ fn add_game(app: &mut App, headless: bool) {
     app.add_system(Stage::Update, controls);
     app.add_system(Stage::Update, drive_camera);
     app.add_system(Stage::Update, traffic);
+    app.add_system(Stage::Update, pedestrians);
     app.add_system(Stage::PostUpdate, street_lights);
     app.add_system(Stage::Last, screenshots);
     app.add_system(Stage::Last, report);
@@ -492,6 +505,7 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
         l.got_rest.unwrap(),
         l.got_city.unwrap(),
     );
+    let quality0 = ctx.resources.expect::<Demo>().quality.unwrap_or_default();
     let assets = ctx.resources.expect_mut::<RenderAssets>();
     let sun = sky.sun;
     let sky = assets.add_cubemap(sky.source);
@@ -548,8 +562,10 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
     spawn_mesh(ctx.world, assets, city.ground, &road_mat);
     let mut parked = Vec::new();
     let mut street_props = Vec::new();
+    let mut walkers: Vec<people::Walker> = Vec::new();
     for chunk in city.chunks {
         parked.extend(chunk.parked);
+        walkers.extend(chunk.walkers);
         street_props.extend(chunk.props);
         for (i, f) in chunk.facade.into_iter().enumerate() {
             spawn_mesh(ctx.world, assets, f, facade_mats[i].as_ref().unwrap());
@@ -577,6 +593,7 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
         scale: f32,
         weight: u32,
         lights: MeshHandle,
+        streaks: MeshHandle,
     }
     let mut car_assets: Vec<CarAsset> = Vec::new();
     for m in models.cars {
@@ -588,12 +605,35 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
         }
         let mut lb = MeshBuilder::new();
         props::add_car_lights(&mut lb, m.half_w, m.half_len, 0.45);
+        // the lights' reflections on the wet road, ahead of and behind the car
+        let mut sb = MeshBuilder::new();
+        let ys = 0.05 / m.scale;
+        for side in [-1.0f32, 1.0] {
+            let x = side * m.half_w * 0.62;
+            city::streak(
+                &mut sb,
+                Vec3::new(x, ys, m.half_len + 3.5),
+                Vec3::Z,
+                4.0,
+                0.3,
+                Vec3::new(1.0, 0.92, 0.75) * 1.4,
+            );
+            city::streak(
+                &mut sb,
+                Vec3::new(x, ys, -m.half_len - 2.5),
+                Vec3::Z,
+                3.0,
+                0.25,
+                Vec3::new(1.0, 0.06, 0.03) * 1.4,
+            );
+        }
         car_assets.push(CarAsset {
             model: rm,
             half_len: m.half_len * m.scale,
             scale: m.scale,
             weight: m.weight,
             lights: assets.add_mesh(lb.finish()),
+            streaks: assets.add_mesh(sb.finish()),
         });
     }
     let total_weight: u32 = car_assets.iter().map(|c| c.weight).sum();
@@ -639,6 +679,8 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
                             );
                             ctx.world
                                 .spawn((Transform::IDENTITY, Mesh3d(a.lights), hot.clone(), Parent(e)));
+                            ctx.world
+                                .spawn((Transform::IDENTITY, Mesh3d(a.streaks), glow_mat.clone(), Parent(e)));
                             (e, a.half_len)
                         };
                         cars.push(Car {
@@ -693,6 +735,44 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
         counts[k] += 1;
         let t = Transform::from_xyz(pos.x, pos.y, pos.z).with_rotation(Quat::from_rotation_y(yaw));
         spawn_model(ctx.world, model, t);
+    }
+
+    // Pedestrians near the flythrough: the walking human in 16 outfits, two stride meshes each.
+    let ped_cap = match quality0 {
+        GraphicsQuality::Low => 150,
+        GraphicsQuality::Medium => 350,
+        _ => 700,
+    };
+    let people_meshes: Vec<[MeshHandle; 2]> = (0..people::OUTFITS as u32)
+        .map(|i| {
+            let o = people::outfit(i);
+            [
+                assets.add_mesh(people::mesh(&o, false)),
+                assets.add_mesh(people::mesh(&o, true)),
+            ]
+        })
+        .collect();
+    let mut pedestrians = Vec::new();
+    for w in walkers
+        .into_iter()
+        .filter(|w| path.iter().any(|q| q.distance_squared(w.origin) < 75.0 * 75.0))
+    {
+        if pedestrians.len() >= ped_cap {
+            break;
+        }
+        let meshes = people_meshes[w.outfit as usize];
+        let (p, yaw, parity) = people::pose(&w, 0.0);
+        let entity = ctx.world.spawn((
+            Transform::from_xyz(p.x, p.y, p.z).with_rotation(Quat::from_rotation_y(yaw)),
+            Mesh3d(meshes[parity]),
+            cold.clone(),
+        ));
+        pedestrians.push(Pedestrian {
+            entity,
+            walker: w,
+            meshes,
+            parity,
+        });
     }
 
     // Particle effects: steam on the streets and roofs, drizzle and mist around the camera.
@@ -760,6 +840,7 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
     d.sky = Some(sky);
     d.spots = city.lights;
     d.cars = cars;
+    d.walkers = pedestrians;
     d.dressed = 0;
 }
 
@@ -782,6 +863,24 @@ fn car_pose(c: &Car, time: f32) -> (Vec3, f32) {
                 -std::f32::consts::FRAC_PI_2
             },
         )
+    }
+}
+
+fn pedestrians(ctx: &mut SystemCtx) {
+    let d = ctx.resources.expect_mut::<Demo>();
+    let time = d.time;
+    for p in &mut d.walkers {
+        let (pos, yaw, parity) = people::pose(&p.walker, time);
+        if let Ok(mut t) = ctx.world.get::<&mut Transform>(p.entity) {
+            t.translation = pos;
+            t.rotation = Quat::from_rotation_y(yaw);
+        }
+        if parity != p.parity {
+            p.parity = parity;
+            if let Ok(mut m) = ctx.world.get::<&mut Mesh3d>(p.entity) {
+                m.0 = p.meshes[parity];
+            }
+        }
     }
 }
 

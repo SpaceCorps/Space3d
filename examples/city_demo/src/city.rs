@@ -80,6 +80,7 @@ pub struct ChunkMeshes {
     pub parked: Vec<(Vec3, f32, u32)>,
     /// Street props (0 hydrant, 1 bin, 2 bench): kind, position, yaw.
     pub props: Vec<(u8, Vec3, f32)>,
+    pub walkers: Vec<crate::people::Walker>,
 }
 
 #[derive(Default)]
@@ -95,6 +96,7 @@ struct ChunkBuild {
     puddle: MeshBuilder,
     parked: Vec<(Vec3, f32, u32)>,
     props: Vec<(u8, Vec3, f32)>,
+    walkers: Vec<crate::people::Walker>,
 }
 
 impl ChunkBuild {
@@ -113,6 +115,7 @@ impl ChunkBuild {
             puddle: self.puddle.finish(),
             parked: self.parked,
             props: self.props,
+            walkers: self.walkers,
         }
     }
 }
@@ -289,13 +292,13 @@ fn lane_marks(b: &mut MeshBuilder, along_z: bool, at: f32, a: f32, c: f32) {
 /// Standing water on a street segment: mirror-smooth irregular patches, mostly along the lanes.
 fn puddles(b: &mut MeshBuilder, along_z: bool, at: f32, a: f32, c: f32, seed: u32) {
     let mut rng = Rng::new(seed + 90_001);
-    for _ in 0..9 {
+    for _ in 0..30 {
         let along = rng.range(a + 2.0, c - 2.0);
         let across = rng.range(-6.6, 6.6);
         if across.abs() < 0.6 {
             continue;
         }
-        let (rl, rw) = (rng.range(1.2, 4.0), rng.range(0.6, 1.8));
+        let (rl, rw) = (rng.range(1.5, 6.0), rng.range(0.8, 2.4));
         let n = 14;
         let center = if along_z {
             Vec3::new(at + across, 0.02, along)
@@ -325,6 +328,12 @@ fn puddles(b: &mut MeshBuilder, along_z: bool, at: f32, a: f32, c: f32, seed: u3
                 .extend_from_slice(&[base, base + 1 + i, base + 1 + (i + 1) % n as u32]);
         }
     }
+}
+
+/// A long soft light streak on the wet ground (the reflection of a light) along `axis`.
+pub fn streak(b: &mut MeshBuilder, center: Vec3, axis: Vec3, half_len: f32, half_w: f32, color: Vec3) {
+    let perp = Vec3::Y.cross(axis).normalize();
+    glow_rect(b, center, axis * half_len, perp * half_w, color.extend(1.0));
 }
 
 /// A thin wire from `a` to `b` sagging by `sag` meters in the middle.
@@ -367,6 +376,22 @@ fn intersection(
                 flat_quad(b, x0.min(x1), z + c0, x0.max(x1), z + c1, y, cell::PAINT_WHITE);
             }
             k += 1.0;
+        }
+        // pedestrians cross on the zebra
+        if rng.chance(0.9) {
+            let across = Vec3::new(az.abs(), 0.0, ax.abs());
+            let mid = Vec3::new(x + ax * 10.0, y, z + az * 10.0);
+            let (len, speed) = (13.0, rng.range(1.1, 1.5));
+            for k in 0..1 + rng.int(3) {
+                ch.walkers.push(crate::people::Walker {
+                    origin: mid - across * 6.5 + Vec3::new(ax, 0.0, az) * (k as f32 * 0.8 - 0.8),
+                    axis: across,
+                    len,
+                    speed,
+                    phase: rng.range(0.0, 2.0 * len),
+                    outfit: rng.int(crate::people::OUTFITS as u32),
+                });
+            }
         }
         // stop bar across the incoming half of the road
         let side = |s: f32| (0.5 * s, 7.0 * s);
@@ -417,6 +442,30 @@ fn intersection(
                 range: 11.0,
             });
         }
+        // their reflections run down both streets
+        let col = |s: u32| {
+            if s == 2 {
+                Vec3::new(0.15, 1.0, 0.35)
+            } else {
+                Vec3::new(1.0, 0.08, 0.04)
+            }
+        };
+        streak(
+            &mut ch.glow,
+            Vec3::new(x + cx * 4.5, 0.05, z + cz * 6.5),
+            Vec3::Z,
+            9.0,
+            0.55,
+            col(state_z) * 1.8,
+        );
+        streak(
+            &mut ch.glow,
+            Vec3::new(x + cx * 6.5, 0.05, z + cz * 4.5),
+            Vec3::X,
+            9.0,
+            0.55,
+            col(state_x) * 1.8,
+        );
     }
     // overhead wires between the signal poles (sagging catenaries)
     if x.abs() < 330.0 && z.abs() < 330.0 {
@@ -850,6 +899,14 @@ fn blade_sign(ch: &mut ChunkBuild, lights: &mut Vec<LightSpot>, rng: &mut Rng, r
         _ => Vec3::new(1.0, 0.72, 0.4),
     };
     let c = (min + max) * 0.5;
+    let axis = if along_x { Vec3::X } else { Vec3::Z };
+    let out = if along_x {
+        Vec3::new(0.0, 0.0, normal)
+    } else {
+        Vec3::new(normal, 0.0, 0.0)
+    };
+    let sc = Vec3::new(c.x, KERB_H + 0.02, c.z) + out * 3.5;
+    streak(&mut ch.glow, sc, axis, 7.0, 0.6, color * 0.7);
     lights.push(LightSpot {
         pos: c + Vec3::new(0.0, 0.0, 0.0),
         color,
@@ -1107,43 +1164,28 @@ fn tree(b: &mut MeshBuilder, p: Vec3, rng: &mut Rng) {
         cell::RUBBER,
         Vec4::new(1.6, 1.3, 1.0, 1.0),
     );
+    // a crown of many small lumps in two tones, so it reads as foliage, not three boulders
     let k = rng.range(0.8, 1.5);
-    let g = Vec4::new(0.05 * k, 0.13 * k, 0.035 * k, 1.0);
-    for i in 0..3 {
-        let a = i as f32 * 2.1 + rng.f() * 2.0;
-        let off = Vec3::new(a.cos() * 0.9, h * 0.62 + rng.f() * 1.2, a.sin() * 0.9);
-        let r = rng.range(0.9, 1.25);
-        b.blob(p + off, Vec3::new(1.9, 1.5, 1.9) * r, rng.int(1000), cell::CONCRETE, g);
+    let top = p + Vec3::Y * (h * 0.78);
+    for i in 0..9 {
+        let a = i as f32 * 2.4 + rng.f() * 1.5;
+        let ring = if i < 3 { 0.35 } else { 1.0 };
+        let off = Vec3::new(
+            a.cos() * 1.25 * ring,
+            (i as f32 / 9.0 - 0.35) * 2.6 + rng.f() * 0.5,
+            a.sin() * 1.25 * ring,
+        );
+        let lit = 0.8 + 0.6 * rng.f();
+        let g = Vec4::new(0.07 * k * lit, 0.17 * k * lit, 0.04 * k * lit, 1.0);
+        let r = rng.range(0.7, 1.05);
+        b.blob(
+            top + off,
+            Vec3::new(1.15, 0.95, 1.15) * r,
+            rng.int(1000),
+            cell::CONCRETE,
+            g,
+        );
     }
-}
-
-/// A pedestrian: a dark coat and a head.
-fn person(b: &mut MeshBuilder, p: Vec3, rng: &mut Rng) {
-    let coats = [
-        Vec4::new(0.03, 0.03, 0.035, 1.0),
-        Vec4::new(0.12, 0.05, 0.04, 1.0),
-        Vec4::new(0.04, 0.06, 0.12, 1.0),
-        Vec4::new(0.25, 0.2, 0.15, 1.0),
-        Vec4::new(0.35, 0.05, 0.05, 1.0),
-    ];
-    let c = coats[rng.int(coats.len() as u32) as usize];
-    let h = rng.range(1.55, 1.85);
-    b.cylinder(
-        p,
-        Vec3::Y,
-        0.22,
-        h - 0.25,
-        6,
-        cell::RUBBER,
-        c * Vec4::new(8.0, 8.0, 8.0, 1.0),
-    );
-    b.blob(
-        p + Vec3::Y * (h - 0.12),
-        Vec3::splat(0.12),
-        rng.int(100),
-        cell::CONCRETE,
-        Vec4::new(0.5, 0.35, 0.28, 1.0),
-    );
 }
 
 // ----------------------------------------------------------------------------------------------
@@ -1222,9 +1264,9 @@ fn street_furniture(ch: &mut ChunkBuild, lights: &mut Vec<LightSpot>, rng: &mut 
             glow_rect(
                 &mut ch.glow,
                 streak_c,
-                along * 11.0,
-                dir * 1.1,
-                Vec4::new(1.0, 0.6, 0.28, 1.0) * 0.55,
+                along * 14.0,
+                dir * 0.9,
+                Vec4::new(1.0, 0.6, 0.28, 1.0) * 0.9,
             );
         }
         // hydrants, bins and benches face the road
@@ -1251,10 +1293,27 @@ fn street_furniture(ch: &mut ChunkBuild, lights: &mut Vec<LightSpot>, rng: &mut 
                 tree(&mut ch.props_cold, p, rng);
             }
         }
-        for _ in 0..rng.int(5) {
+        for _ in 0..2 + rng.int(4) {
             let p =
                 Vec3::new(c.x, KERB_H, c.y) + dir * rng.range(CURB - 4.8, CURB - 2.2) + along * rng.range(-22.0, 22.0);
-            person(&mut ch.props_cold, p, rng);
+            let len = rng.range(5.0, 16.0);
+            let speed = rng.range(1.0, 1.6);
+            let outfit = rng.int(crate::people::OUTFITS as u32);
+            let group = if rng.chance(0.35) { 2 + rng.int(2) } else { 1 };
+            for k in 0..group {
+                ch.walkers.push(crate::people::Walker {
+                    origin: p + dir * (k as f32 * 0.5),
+                    axis: along,
+                    len,
+                    speed,
+                    phase: rng.range(0.0, 2.0 * len) + k as f32 * 0.9,
+                    outfit: if k == 0 {
+                        outfit
+                    } else {
+                        rng.int(crate::people::OUTFITS as u32)
+                    },
+                });
+            }
         }
         // parked cars along this curb
         let n = rng.int(5);

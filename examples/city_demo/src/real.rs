@@ -121,13 +121,27 @@ macro_rules! set {
 /// Wet asphalt (`asphalt_02`).
 pub fn asphalt(low: bool) -> Option<TextureSet> {
     let (d, a, n) = set!("asphalt_02");
-    surface(d, a, n, low, 0.4, 0.35)
+    surface(
+        d,
+        a,
+        n,
+        low,
+        crate::knob("CITY_ROAD_BASE", 0.12),
+        crate::knob("CITY_ROAD_ROUGH", 0.18),
+    )
 }
 
 /// Pavement (`concrete_pavement`), damp.
 pub fn paving(low: bool) -> Option<TextureSet> {
     let (d, a, n) = set!("concrete_pavement");
-    surface(d, a, n, low, 0.75, 0.7)
+    surface(
+        d,
+        a,
+        n,
+        low,
+        crate::knob("CITY_PAVE_BASE", 0.3),
+        crate::knob("CITY_PAVE_ROUGH", 0.6),
+    )
 }
 
 /// Roofs (`bitumen`).

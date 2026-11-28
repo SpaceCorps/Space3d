@@ -31,3 +31,7 @@ bus, lamps, signals, trees, pedestrians, steam and rain. The procedural cars are
 fallback when a model fails to load.
 
 The repacked Kenney GLBs have a desaturated colormap so the cars sit in the HDRI lighting. All CC0 per the Poly Haven API. Total assets: 34 MB.
+
+| Animated Human (Quaternius) | https://opengameart.org/content/animated-human-low-poly (License.txt in the zip: CC0 1.0) | Quaternius | `assets/models/quaternius_human.bin` (the OBJ's walking pose, baked to a compact vertex file with a colour zone per vertex; recoloured in code, mirrored copy for the other half of the stride) | pedestrians |
+
+Not usable: Poly Haven trees (jacaranda_tree has a 208 MB bin, polycount 312k); trees stay procedural (nine small lumps per crown). Umbrellas are procedural. Wet-road streaks, puddles and light pools are procedural.
