@@ -38,6 +38,11 @@ impl MeshBuilder {
         self.m.colors.push(c.to_array());
     }
 
+    /// One vertex (for hand-built triangle fans).
+    pub fn push_vertex(&mut self, p: Vec3, n: Vec3, uv: [f32; 2], c: Vec4) {
+        self.vertex(p, n, uv, c);
+    }
+
     /// A quad, counter-clockwise seen from the side `n` points to.
     pub fn quad(&mut self, p: [Vec3; 4], n: Vec3, uv: [[f32; 2]; 4], c: Vec4) {
         self.quad_colors(p, n, uv, [c; 4]);

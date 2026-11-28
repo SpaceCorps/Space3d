@@ -26,15 +26,16 @@ mod flight;
 mod mesh;
 mod procgen;
 mod props;
+mod real;
 
 use city::{CityData, LightSpot};
 use procgen::{Facade, TextureSet};
 use space3d::particles::prelude::*;
 use space3d::prelude::*;
 use space3d::render::{
-    Bloom, ColorGrading, CubemapHandle, CubemapSource, DirectionalShadow, EnvironmentLight, FilmGrain, Fog,
-    FrameSettings, FxaaQuality, GpuTimings, GraphicsQuality, IblSettings, LightingSettings, RenderStats, Renderer,
-    ShadingModel, ShadowFit, Ssao, Ssr, Vignette,
+    Bloom, ColorGrading, CubemapHandle, DirectionalShadow, EnvironmentLight, FilmGrain, Fog, FrameSettings,
+    FxaaQuality, GpuTimings, GraphicsQuality, IblSettings, LightingSettings, RenderStats, Renderer, ShadingModel,
+    ShadowFit, Ssao, Ssr, Vignette,
 };
 use space3d::tasks::Task;
 
@@ -64,12 +65,12 @@ struct Rest {
 /// The generation tasks and what they have delivered.
 #[derive(Default)]
 struct Loading {
-    sky: Option<Task<CubemapSource>>,
+    sky: Option<Task<real::Sky>>,
     tex_a: Option<Task<Textures>>,
     tex_b: Option<Task<Textures>>,
     rest: Option<Task<Rest>>,
     city: Option<Task<CityData>>,
-    got_sky: Option<CubemapSource>,
+    got_sky: Option<real::Sky>,
     got_a: Option<Textures>,
     got_b: Option<Textures>,
     got_rest: Option<Rest>,
@@ -263,7 +264,7 @@ fn setup(ctx: &mut SystemCtx) {
     };
     let post = PostProcess::default()
         .with_tonemapper(Tonemapper::AgX)
-        .with_exposure(knob("CITY_EXPOSURE", 0.0))
+        .with_exposure(knob("CITY_EXPOSURE", -0.3))
         .with_bloom(
             Bloom::glow()
                 .with_intensity(knob("CITY_BLOOM", 0.5))
@@ -355,6 +356,7 @@ fn choose_quality(ctx: &mut SystemCtx) {
         renderer.capabilities().adapter.backend
     );
     set_quality(ctx, q);
+    let low = q == GraphicsQuality::Low;
     let face = match q {
         GraphicsQuality::Low => 512,
         GraphicsQuality::Medium => 768,
@@ -367,18 +369,23 @@ fn choose_quality(ctx: &mut SystemCtx) {
             .collect(),
     };
     let loading = Loading {
-        sky: Some(space3d::tasks::spawn_compute(move || procgen::sky_cubemap(face))),
+        sky: Some(space3d::tasks::spawn_compute(move || {
+            real::sky(low, face).unwrap_or_else(|| real::Sky {
+                source: procgen::sky_cubemap(face),
+                sun: None,
+            })
+        })),
         tex_a: Some(space3d::tasks::spawn_compute(move || {
             facades([Facade::Concrete, Facade::Brick])
         })),
         tex_b: Some(space3d::tasks::spawn_compute(move || {
             facades([Facade::Glass, Facade::Stone])
         })),
-        rest: Some(space3d::tasks::spawn_compute(|| Rest {
+        rest: Some(space3d::tasks::spawn_compute(move || Rest {
             shop: procgen::shop_textures(5),
-            asphalt: procgen::asphalt_textures(21),
-            paving: procgen::paving_textures(33),
-            roof: procgen::roof_textures(44),
+            asphalt: real::asphalt(low).unwrap_or_else(|| procgen::asphalt_textures(21)),
+            paving: real::paving(low).unwrap_or_else(|| procgen::paving_textures(33)),
+            roof: real::roof(low).unwrap_or_else(|| procgen::roof_textures(44)),
             palette: procgen::palette(),
             glow: procgen::glow_texture(),
         })),
@@ -457,7 +464,8 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
         l.got_city.unwrap(),
     );
     let assets = ctx.resources.expect_mut::<RenderAssets>();
-    let sky = assets.add_cubemap(sky);
+    let sun = sky.sun;
+    let sky = assets.add_cubemap(sky.source);
     let emissive = knob("CITY_WINDOWS", 1.8);
     let mut facade_mats: [Option<Material>; 4] = [None, None, None, None];
     for (kind, set) in a.facades.into_iter().chain(b.facades) {
@@ -493,6 +501,7 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
         .with_texture(glow_tex)
         .with_render_order(-5);
 
+    let puddle_mat = Material::color(Vec4::new(0.012, 0.014, 0.018, 1.0)).with_metallic_roughness(0.0, 0.03);
     spawn_mesh(ctx.world, assets, city.ground, &road_mat);
     for chunk in city.chunks {
         for (i, f) in chunk.facade.into_iter().enumerate() {
@@ -504,6 +513,7 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
         spawn_mesh(ctx.world, assets, chunk.props_hot, &hot);
         spawn_mesh(ctx.world, assets, chunk.props_cold, &cold);
         spawn_mesh(ctx.world, assets, chunk.glow, &glow_mat);
+        spawn_mesh(ctx.world, assets, chunk.puddle, &puddle_mat);
     }
     let vehicle_handles: Vec<MeshHandle> = city.vehicles.into_iter().map(|m| assets.add_mesh(m)).collect();
 
@@ -582,10 +592,26 @@ fn dress(ctx: &mut SystemCtx, l: Loading) {
     }
 
     // The sky is the background and the light.
+    // The HDRI's sun is turned to the streets' azimuth and lights the city with its elevation.
+    let target_az = 18f32.to_radians();
+    let (rot, sun_dir) = match sun {
+        Some((az, el)) => (
+            Quat::from_rotation_y(az - target_az),
+            Vec3::new(el.cos() * target_az.sin(), el.sin(), -el.cos() * target_az.cos()),
+        ),
+        None => (Quat::IDENTITY, procgen::sun_direction()),
+    };
+    for (t, _) in ctx.world.query_mut::<(&mut Transform, &DirectionalLight)>() {
+        *t = Transform::IDENTITY.looking_at(-sun_dir, Vec3::Y);
+    }
     if let Some(cam) = camera {
-        let env =
-            EnvironmentLight::new(sky).with_intensity(knob("CITY_ENV_DIFFUSE", 1.0), knob("CITY_ENV_SPECULAR", 1.0));
-        let _ = ctx.world.insert(cam, (Skybox::new(sky), env));
+        let mut env =
+            EnvironmentLight::new(sky).with_intensity(knob("CITY_ENV_DIFFUSE", 0.9), knob("CITY_ENV_SPECULAR", 0.7));
+        env.rotation = rot;
+        let mut sb = Skybox::new(sky);
+        sb.rotation = rot;
+        sb.intensity = knob("CITY_SKY", 0.55);
+        let _ = ctx.world.insert(cam, (sb, env));
     }
     let d = ctx.resources.expect_mut::<Demo>();
     d.sky = Some(sky);

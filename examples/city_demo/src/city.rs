@@ -73,6 +73,7 @@ pub struct ChunkMeshes {
     pub props_hot: MeshData,
     pub props_cold: MeshData,
     pub glow: MeshData,
+    pub puddle: MeshData,
 }
 
 #[derive(Default)]
@@ -84,6 +85,7 @@ struct ChunkBuild {
     props_hot: MeshBuilder,
     props_cold: MeshBuilder,
     glow: MeshBuilder,
+    puddle: MeshBuilder,
 }
 
 impl ChunkBuild {
@@ -97,6 +99,7 @@ impl ChunkBuild {
             props_hot: self.props_hot.finish(),
             props_cold: self.props_cold.finish(),
             glow: self.glow.finish(),
+            puddle: self.puddle.finish(),
         }
     }
 }
@@ -143,9 +146,11 @@ pub fn generate() -> CityData {
             // a street along Z at x = street(s)
             let ch = &mut chunks[chunk_index(street(s), mid)];
             lane_marks(&mut ch.props_cold, true, street(s), a, b);
+            puddles(&mut ch.puddle, true, street(s), a, b, (s * 64 + t) as u32);
             // a street along X at z = street(s)
             let ch = &mut chunks[chunk_index(mid, street(s))];
             lane_marks(&mut ch.props_cold, false, street(s), a, b);
+            puddles(&mut ch.puddle, false, street(s), a, b, (s * 64 + t + 5000) as u32);
         }
     }
 
@@ -264,6 +269,47 @@ fn lane_marks(b: &mut MeshBuilder, along_z: bool, at: f32, a: f32, c: f32) {
         while l + 3.0 < c - 2.0 {
             rect(b, off - 0.08, off + 0.08, l, l + 3.0, cell::PAINT_WHITE);
             l += 9.0;
+        }
+    }
+}
+
+/// Standing water on a street segment: mirror-smooth irregular patches, mostly along the lanes.
+fn puddles(b: &mut MeshBuilder, along_z: bool, at: f32, a: f32, c: f32, seed: u32) {
+    let mut rng = Rng::new(seed + 90_001);
+    for _ in 0..9 {
+        let along = rng.range(a + 2.0, c - 2.0);
+        let across = rng.range(-6.6, 6.6);
+        if across.abs() < 0.6 {
+            continue;
+        }
+        let (rl, rw) = (rng.range(1.2, 4.0), rng.range(0.6, 1.8));
+        let n = 14;
+        let center = if along_z {
+            Vec3::new(at + across, 0.02, along)
+        } else {
+            Vec3::new(along, 0.02, at + across)
+        };
+        let ring: Vec<Vec3> = (0..n)
+            .map(|i| {
+                let ang = std::f32::consts::TAU * i as f32 / n as f32;
+                let j = 0.75 + 0.4 * rng.f();
+                let (u, v) = (ang.cos() * rl * j, -ang.sin() * rw * j);
+                center
+                    + if along_z {
+                        Vec3::new(v, 0.0, u)
+                    } else {
+                        Vec3::new(u, 0.0, v)
+                    }
+            })
+            .collect();
+        let base = b.m.positions.len() as u32;
+        b.push_vertex(center, Vec3::Y, [0.5, 0.5], Vec4::ONE);
+        for p in &ring {
+            b.push_vertex(*p, Vec3::Y, [0.5, 0.5], Vec4::ONE);
+        }
+        for i in 0..n as u32 {
+            b.m.indices
+                .extend_from_slice(&[base, base + 1 + i, base + 1 + (i + 1) % n as u32]);
         }
     }
 }

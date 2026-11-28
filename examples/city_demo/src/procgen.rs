@@ -616,7 +616,7 @@ pub fn shop_textures(seed: u32) -> TextureSet {
 
 /// Wet asphalt, one tile of `ASPHALT_TILE_M` meters: aggregate grain, hairline cracks, patches
 /// and puddles (low roughness, flat normals).
-pub const ASPHALT_TILE_M: f32 = 12.0;
+pub const ASPHALT_TILE_M: f32 = 4.0;
 
 pub fn asphalt_textures(seed: u32) -> TextureSet {
     let s = 1024u32;
@@ -657,7 +657,7 @@ pub fn asphalt_textures(seed: u32) -> TextureSet {
 }
 
 /// Pavement slabs of 1.2 m, 4 × 4 per tile of 4.8 m.
-pub const PAVING_TILE_M: f32 = 4.8;
+pub const PAVING_TILE_M: f32 = 3.0;
 
 pub fn paving_textures(seed: u32) -> TextureSet {
     let s = 512u32;
@@ -687,7 +687,7 @@ pub fn paving_textures(seed: u32) -> TextureSet {
 }
 
 /// Rooftop tar and gravel (8 m tile).
-pub const ROOF_TILE_M: f32 = 8.0;
+pub const ROOF_TILE_M: f32 = 4.0;
 
 pub fn roof_textures(seed: u32) -> TextureSet {
     let s = 256u32;
